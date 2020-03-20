@@ -78,6 +78,8 @@ struct ioring_options {
 	unsigned int sqpoll_thread;
 	unsigned int sqpoll_set;
 	unsigned int sqpoll_cpu;
+	unsigned int sqpoll_idle_set;
+	unsigned int sqpoll_idle;
 	unsigned int nonvectored;
 	unsigned int uncached;
 };
@@ -98,6 +100,15 @@ static int fio_ioring_sqpoll_cb(void *data, unsigned long long *val)
 
 	o->sqpoll_cpu = *val;
 	o->sqpoll_set = 1;
+	return 0;
+}
+
+static int fio_ioring_sqpoll_idle_cb(void *data, unsigned long long *val)
+{
+	struct ioring_options *o = data;
+
+	o->sqpoll_idle = *val;
+	o->sqpoll_idle_set = 1;
 	return 0;
 }
 
@@ -167,6 +178,15 @@ static struct fio_option options[] = {
 		.category = FIO_OPT_C_ENGINE,
 		.group	= FIO_OPT_G_IOURING,
 	},
+	{
+		.name	= "sqthread_poll_idle",
+		.lname	= "SQ Thread idle period before sleep",
+		.type	= FIO_OPT_INT,
+		.cb	= fio_ioring_sqpoll_idle_cb,
+		.help	= "How long in microsecond should SQ thread idle wait for",
+		.category = FIO_OPT_C_ENGINE,
+		.group	= FIO_OPT_G_IOURING,
+	},	
 	{
 		.name	= "nonvectored",
 		.lname	= "Non-vectored",
@@ -546,6 +566,9 @@ static int fio_ioring_queue_init(struct thread_data *td)
 			p.flags |= IORING_SETUP_SQ_AFF;
 			p.sq_thread_cpu = o->sqpoll_cpu;
 		}
+		if (o->sqpoll_idle_set) {
+			p.sq_thread_idle = o->sqpoll_idle;
+		}		
 	}
 
 	ret = syscall(__NR_io_uring_setup, depth, &p);
