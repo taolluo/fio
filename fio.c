@@ -39,7 +39,7 @@ int main(int argc, char *argv[], char *envp[])
 	if (fio_server_create_sk_key())
 		goto done;
 
-	if (parse_options(argc, argv))
+	if (parse_options(argc, argv)) // assign option and td
 		goto done_key;
 
 	/*
@@ -57,7 +57,7 @@ int main(int argc, char *argv[], char *envp[])
 			goto done_key;
 		ret = fio_handle_clients(&fio_client_ops);
 	} else
-		ret = fio_backend(NULL);
+		ret = fio_backend(NULL); // run job, io loop
 
 done_key:
 	fio_server_destroy_sk_key();

@@ -546,8 +546,13 @@ static int __setup_rate(struct thread_data *td, enum fio_ddir ddir)
 
 	if (td->o.rate[ddir])
 		td->rate_bps[ddir] = td->o.rate[ddir];
-	else
+//    dprint(FD_RATE, "SW: __setup_rate, poisson td->o.rate[ddir] = %d \n", td->o.rate[ddir] );
+//    dprint(FD_RATE, "SW: __setup_rate, poisson td->o.rate[ddir] = %d \n", td->o.rate[ddir] );
+
+    else
 		td->rate_bps[ddir] = (uint64_t) td->o.rate_iops[ddir] * bs;
+    dprint(FD_RATE, "SW: __setup_rate, poisson td->o.rate_iops_min[ddir]= %d \n", td->o.rate_iops_min[ddir] );
+    dprint(FD_RATE, "SW: __setup_rate, poisson td->o.rate_iops[ddir]= %d \n", td->o.rate_iops[ddir] );
 
 	if (!td->rate_bps[ddir]) {
 		log_err("rate lower than supported\n");
@@ -1191,6 +1196,9 @@ static void init_flags(struct thread_data *td)
 
 	if (o->mem_type == MEM_CUDA_MALLOC)
 		td->flags &= ~TD_F_SCRAMBLE_BUFFERS;
+    // by default, starts with negative half of square wave
+//    if (o->square_wave_period)
+//        td->flags |= TD_F_SQUARE_WAVE_IN_NEG;
 
 	for (i = 0; i < DDIR_RWDIR_CNT; i++) {
 		if (option_check_rate(td, i)) {
@@ -1414,7 +1422,7 @@ static const char *make_log_name(const char *logname, const char *jobname)
 }
 
 /*
- * Adds a job to the list of things todo. Sanitizes the various options
+ * Adds a job to the list of things ?? todo. Sanitizes the various options
  * to make sure we don't have conflicts, and initializes various
  * members of td.
  */
@@ -2966,6 +2974,7 @@ int parse_options(int argc, char *argv[])
 					return 1;
 				free(ini_file[i]);
 			} else if (!is_backend) {
+			    fprintf(stderr, "ini file is %s\n",ini_file[i]);
 				if (parse_jobs_ini(ini_file[i], 0, i, type))
 					return 1;
 				free(ini_file[i]);

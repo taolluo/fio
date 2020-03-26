@@ -126,7 +126,7 @@ bool ramp_time_over(struct thread_data *td)
 		td->ramp_time_over = true;
 		reset_all_stats(td);
 		reset_io_stats(td);
-		td_set_runstate(td, TD_RAMP);
+		td_set_runstate(td, TD_RAMP); //??? running
 
 		/*
 		 * If we have a parent, the parent isn't doing IO. Hence

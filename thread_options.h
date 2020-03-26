@@ -183,6 +183,8 @@ struct thread_options {
 	unsigned long long start_delay_high;
 	unsigned long long timeout;
 	unsigned long long ramp_time;
+	unsigned long long square_wave_period;
+	unsigned long long square_wave_pulse_width;
 	unsigned int ss_state;
 	fio_fp64_t ss_limit;
 	unsigned long long ss_dur;

@@ -152,6 +152,7 @@ static bool __check_min_rate(struct thread_data *td, struct timespec *now,
 
 	iops += td->this_io_blocks[ddir];
 	bytes += td->this_io_bytes[ddir];
+
 	ratemin += td->o.ratemin[ddir];
 	rate_iops += td->o.rate_iops[ddir];
 	rate_iops_min += td->o.rate_iops_min[ddir];
@@ -827,21 +828,66 @@ static bool io_complete_bytes_exceeded(struct thread_data *td)
  */
 static long long usec_for_io(struct thread_data *td, enum fio_ddir ddir)
 {
-	uint64_t bps = td->rate_bps[ddir];
-
+	uint64_t bps, iops;
+    uint64_t current_io_time;
 	assert(!(td->flags & TD_F_CHILD));
+    uint64_t is_pulse;
+
+    bps = td->rate_bps[ddir];
+    iops = bps / td->o.bs[ddir];
+    is_pulse=1;
+
+
+
+
+
+    if (td->o.square_wave_period && td->o.square_wave_pulse_width) {
+        dprint(FD_RATE, "SW:  square_wave_period = %d, square_wave_pulse_width=%d \n", (int) td->o.square_wave_period, (int) td->o.square_wave_pulse_width);
+        dprint(FD_RATE, "SW:  pulse bps = %d, iops=%d \n", (int) bps,iops);
+
+        current_io_time = td->rate_next_io_time[ddir]; // current  io_time utime_since_now(&td->epoch);
+        dprint(FD_RATE, "SW: poisson current_io_time = %d ,  mod prd = %d \n", current_io_time,(int) (current_io_time% td->o.square_wave_period));
+
+        if ((  current_io_time % td->o.square_wave_period) > td->o.square_wave_pulse_width)
+        {
+            is_pulse = 0;
+            if (td->o.rate_iops_min[ddir])
+            {
+                iops = td->o.rate_iops_min[ddir];
+                bps = iops * td->o.bs[ddir];
+                dprint(FD_RATE, "SW: rate_iops_min, poisson iops = %d ,  bps = %d \n", iops,bps );
+
+            }
+            else if (td->o.ratemin[ddir])
+            {
+                bps = td->o.ratemin[ddir];
+                iops = bps / td->o.bs[ddir];
+                dprint(FD_RATE, "SW: ratemin, poisson iops = %d ,  bps = %d \n", iops,bps );
+
+            } else {
+                iops = 10000; // by default 10k iops, at negative half of square wave
+                bps = iops * td->o.bs[ddir];
+                dprint(FD_RATE, "SW: default, poisson iops = %d ,  bps = %d \n", iops,bps );
+
+            }
+        }
+
+    }
+
 
 	if (td->o.rate_process == RATE_PROCESS_POISSON) {
-		uint64_t val, iops;
+        uint64_t val;
 
-		iops = bps / td->o.bs[ddir];
-		val = (int64_t) (1000000 / iops) *
-				-logf(__rand_0_1(&td->poisson_state[ddir]));
+		val = (int64_t) (0.5 + (1000000 / iops) *
+				-logf(__rand_0_1(&td->poisson_state[ddir])));
 		if (val) {
 			dprint(FD_RATE, "poisson rate iops=%llu, ddir=%d\n",
 					(unsigned long long) 1000000 / val,
 					ddir);
 		}
+
+         dprint(FD_RATE, "SW: poisson rate is_pulse=%d, val = %d\n", (int) is_pulse , (int) val );
+
 		td->last_usec[ddir] += val;
 		return td->last_usec[ddir];
 	} else if (bps) {
@@ -916,7 +962,7 @@ static void do_io(struct thread_data *td, uint64_t *bytes_done)
 		td_set_runstate(td, TD_RAMP);
 	else
 		td_set_runstate(td, TD_RUNNING);
-
+	// todo set square wave phase here
 	lat_target_init(td);
 
 	total_bytes = td->o.size;
@@ -978,7 +1024,7 @@ static void do_io(struct thread_data *td, uint64_t *bytes_done)
 		     (td->o.time_based && td->o.verify != VERIFY_NONE)))
 			break;
 
-		io_u = get_io_u(td);
+		io_u = get_io_u(td); // may sleep
 		if (IS_ERR_OR_NULL(io_u)) {
 			int err = PTR_ERR(io_u);
 
@@ -1054,14 +1100,15 @@ static void do_io(struct thread_data *td, uint64_t *bytes_done)
 				td->rate_io_issue_bytes[__ddir] += blen;
 			}
 
-			if (should_check_rate(td))
+			if (should_check_rate(td)){
 				td->rate_next_io_time[__ddir] = usec_for_io(td, __ddir);
-
+                dprint(FD_RATE, "SW: offload, td->rate_next_io_time: %d \n", td->rate_next_io_time[ddir]);}
 		} else {
 			ret = io_u_submit(td, io_u);
 
-			if (should_check_rate(td))
+			if (should_check_rate(td)){
 				td->rate_next_io_time[ddir] = usec_for_io(td, ddir);
+                dprint(FD_RATE, "SW: no offload, td->rate_next_io_timfewe: %d \n", td->rate_next_io_time[ddir]);}
 
 			if (io_queue_event(td, io_u, &ret, ddir, &bytes_issued, 0, &comp_time))
 				break;
@@ -1082,7 +1129,7 @@ reap:
 		if (!ddir_rw_sum(td->bytes_done) &&
 		    !td_ioengine_flagged(td, FIO_NOIO))
 			continue;
-
+// For square wave function, negative half will not break this min rate
 		if (!in_ramp_time(td) && should_check_rate(td)) {
 			if (check_min_rate(td, &comp_time)) {
 				if (exitall_on_terminate || td->o.exitall_error)
