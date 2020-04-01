@@ -1,8 +1,5 @@
 [square_wave]
 size=400m
-directory=/mnt/ramdisk
-ioengine=libaio
-
 numjobs=1
 runtime=5
 
@@ -30,3 +27,18 @@ rate_iops_min=10000
 # a period begins with pulse phase
 square_wave_period=2000 # in usec
 square_wave_pulse_width=1000 # in usec
+
+## io-uring experiment
+
+ioengine=io_uring
+hipri=1  # IOPOLL
+sqthread_poll=1 # SQPOLL
+fixedbufs=1
+registerfiles=1
+direct=1
+filename=/dev/nvme1n1
+
+
+## libaio experiment
+; directory=/mnt/ramdisk
+; ioengine=libaio
