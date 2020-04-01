@@ -190,9 +190,9 @@ static bool __check_min_rate(struct thread_data *td, struct timespec *now,
 			/*
 			 * checks iops specified rate
 			 */
-			if (iops < rate_iops) {
+			if (iops < rate_iops_min) {
 				log_err("%s: rate_iops_min=%u not met, only performed %lu IOs\n",
-						td->o.name, rate_iops, iops);
+						td->o.name, rate_iops_min, iops);
 				return true;
 			} else {
 				if (spent)
@@ -826,58 +826,54 @@ static bool io_complete_bytes_exceeded(struct thread_data *td)
  * used to calculate the next io time for rate control
  *
  */
-static long long usec_for_io(struct thread_data *td, enum fio_ddir ddir)
+static long long usec_for_io(struct thread_data *td, enum fio_ddir ddir, uint64_t io_u_start)
 {
-	uint64_t bps, iops;
+	uint64_t bps, iops, bps_max, iops_max, bps_min, iops_min;
     uint64_t current_io_time;
 	assert(!(td->flags & TD_F_CHILD));
-    uint64_t is_pulse;
+    uint64_t is_square_wave=0, is_pulse=0;
 
-    bps = td->rate_bps[ddir];
-    iops = bps / td->o.bs[ddir];
-    is_pulse=1;
-
-
+    bps = bps_max = td->rate_bps[ddir];
+    iops = iops_max = bps / td->o.bs[ddir];
 
 
 
     if (td->o.square_wave_period && td->o.square_wave_pulse_width) {
+        is_square_wave = 1;
         dprint(FD_RATE, "SW:  square_wave_period = %d, square_wave_pulse_width=%d \n", (int) td->o.square_wave_period, (int) td->o.square_wave_pulse_width);
         dprint(FD_RATE, "SW:  pulse bps = %d, iops=%d \n", (int) bps,iops);
 
         current_io_time = td->rate_next_io_time[ddir]; // current  io_time utime_since_now(&td->epoch);
         dprint(FD_RATE, "SW: poisson current_io_time = %d ,  mod prd = %d \n", current_io_time,(int) (current_io_time% td->o.square_wave_period));
 
-        if ((  current_io_time % td->o.square_wave_period) > td->o.square_wave_pulse_width)
-        {
-            is_pulse = 0;
-            if (td->o.rate_iops_min[ddir])
-            {
-                iops = td->o.rate_iops_min[ddir];
-                bps = iops * td->o.bs[ddir];
-                dprint(FD_RATE, "SW: rate_iops_min, poisson iops = %d ,  bps = %d \n", iops,bps );
-
-            }
-            else if (td->o.ratemin[ddir])
-            {
-                bps = td->o.ratemin[ddir];
-                iops = bps / td->o.bs[ddir];
-                dprint(FD_RATE, "SW: ratemin, poisson iops = %d ,  bps = %d \n", iops,bps );
-
-            } else {
-                iops = 10000; // by default 10k iops, at negative half of square wave
-                bps = iops * td->o.bs[ddir];
-                dprint(FD_RATE, "SW: default, poisson iops = %d ,  bps = %d \n", iops,bps );
-
-            }
+        if (! (current_io_time % td->o.square_wave_period) > td->o.square_wave_pulse_width) {
+            is_pulse = 1;
         }
-
     }
 
+    if (is_square_wave){
+        if (td->o.rate_iops_min[ddir]) {
+            iops_min = td->o.rate_iops_min[ddir];
+            bps_min = iops_min * td->o.bs[ddir];
+            dprint(FD_RATE, "SW: rate_iops_min, poisson iops = %d ,  bps = %d \n", iops_min, bps_min);
+
+        } else if (td->o.ratemin[ddir]) {
+            bps_min = td->o.ratemin[ddir];
+            iops_min = bps_min / td->o.bs[ddir];
+            dprint(FD_RATE, "SW: ratemin, poisson iops = %d ,  bps = %d \n", iops_min, bps_min);
+
+        } else {
+            iops_min = iops_max / 20; // by default 5% of max iops, at negative half of square wave
+            bps_min = iops_min * td->o.bs[ddir];
+            dprint(FD_RATE, "SW: default, poisson iops = %d ,  bps = %d \n", iops, bps);
+
+        }
+    }
 
 	if (td->o.rate_process == RATE_PROCESS_POISSON) {
         uint64_t val;
-
+        if (is_square_wave && !is_pulse)
+            iops = iops_min;
 		val = (int64_t) (0.5 + (1000000 / iops) *
 				-logf(__rand_0_1(&td->poisson_state[ddir])));
 		if (val) {
@@ -890,12 +886,43 @@ static long long usec_for_io(struct thread_data *td, enum fio_ddir ddir)
 
 		td->last_usec[ddir] += val;
 		return td->last_usec[ddir];
-	} else if (bps) {
-		uint64_t bytes = td->rate_io_issue_bytes[ddir];
-		uint64_t secs = bytes / bps;
-		uint64_t remainder = bytes % bps;
+	} else if (td->o.rate_process == RATE_PROCESS_LINEAR) {
 
-		return remainder * 1000000 / bps + secs * 1000000;
+        dprint(FD_RATE, "SW: linear, square wave 0 bps: %d is_square_wave: %d\n",bps, is_square_wave);
+        uint64_t bytes = td->rate_io_issue_bytes[ddir];
+
+
+        if (!is_square_wave && bps) {
+
+            dprint(FD_RATE, "SW: linear, constant rate \n");
+            uint64_t secs = bytes / bps;
+            uint64_t remainder = bytes % bps;
+
+            return remainder * 1000000 / bps + secs * 1000000;
+        }else{
+            dprint(FD_RATE, "SW: linear, square wave 1 td->o.square_wave_pulse_width %d; bps_max %d\n",td->o.square_wave_pulse_width , bps_max);
+            uint64_t byte_per_pulse = td->o.square_wave_pulse_width * bps_max / 1000000;
+            dprint(FD_RATE, "SW: linear, square wave 2 td->o.square_wave_period : %d; bps_min: %d\n",td->o.square_wave_period ,bps_min );
+            uint64_t byte_per_negative_half = (td->o.square_wave_period - td->o.square_wave_pulse_width) * bps_min / 1000000;
+            dprint(FD_RATE, "SW: linear, square wave 3 byte_per_pulse: %d; byte_per_negative_half: %d; bytes: %d\n",byte_per_pulse, byte_per_negative_half, bytes);
+            uint64_t periods = bytes / (byte_per_pulse + byte_per_negative_half);
+            dprint(FD_RATE, "SW: linear, square wave 4\n");
+            uint64_t byte_remainder = bytes % (byte_per_pulse + byte_per_negative_half);
+
+            if (byte_remainder < byte_per_pulse){ // in pulse
+                dprint(FD_RATE, "SW: linear square wave, in pulse \n");
+
+                uint64_t secs_in_pulse = byte_remainder / bps_max;
+                uint64_t remainder = byte_remainder % bps_max;
+                return td->o.square_wave_period * periods + remainder * 1000000 / bps_max + secs_in_pulse * 1000000;
+            }else{
+                dprint(FD_RATE, "SW: linear square wave, in negative half \n");
+                uint64_t secs_after_pulse = (byte_remainder - byte_per_pulse) / bps_min;
+                uint64_t remainder = (byte_remainder - byte_per_pulse) % bps_min;
+                return td->o.square_wave_period * periods + td->o.square_wave_pulse_width + remainder * 1000000 / bps_min + secs_after_pulse * 1000000;
+            }
+	    }
+
 	}
 
 	return 0;
@@ -989,7 +1016,11 @@ static void do_io(struct thread_data *td, uint64_t *bytes_done)
 	while ((td->o.read_iolog_file && !flist_empty(&td->io_log_list)) ||
 		(!flist_empty(&td->trim_list)) || !io_issue_bytes_exceeded(td) ||
 		td->o.time_based) {
-		struct timespec comp_time;
+        uint64_t usec_since_epoch;
+        usec_since_epoch= utime_since_now(&td->epoch);
+        dprint(FD_IO, "start of do_io() while loop: %d; \n", usec_since_epoch);
+
+        struct timespec comp_time;
 		struct io_u *io_u;
 		int full;
 		enum fio_ddir ddir;
@@ -1024,8 +1055,16 @@ static void do_io(struct thread_data *td, uint64_t *bytes_done)
 		     (td->o.time_based && td->o.verify != VERIFY_NONE)))
 			break;
 
-		io_u = get_io_u(td); // may sleep
-		if (IS_ERR_OR_NULL(io_u)) {
+//        uint64_t usec_since_epoch;
+        usec_since_epoch=  utime_since_now(&td->epoch);
+        dprint(FD_IO, "before get_io_u(usec_since_epoch): %d; \n", usec_since_epoch);
+
+		io_u = get_io_u(td); // may sleep, set io_u->start before return
+
+		usec_since_epoch=  utime_since_now(&td->epoch);
+        dprint(FD_IO, "after get_io_u(usec_since_epoch): %d; \n", usec_since_epoch);
+
+        if (IS_ERR_OR_NULL(io_u)) {
 			int err = PTR_ERR(io_u);
 
 			io_u = NULL;
@@ -1101,14 +1140,28 @@ static void do_io(struct thread_data *td, uint64_t *bytes_done)
 			}
 
 			if (should_check_rate(td)){
-				td->rate_next_io_time[__ddir] = usec_for_io(td, __ddir);
-                dprint(FD_RATE, "SW: offload, td->rate_next_io_time: %d \n", td->rate_next_io_time[ddir]);}
+                uint64_t usec_since_epoch;
+                usec_since_epoch= utime_since(&td->epoch, &io_u->start_time); // utime_since_now(&td->epoch);
+                dprint(FD_IO, "SW: current_io_time: %d ;  &io_u->start_time (usec_since_epoch) %d \n",td->rate_next_io_time[__ddir] , usec_since_epoch);
+
+                td->rate_next_io_time[__ddir] = usec_for_io(td, __ddir, usec_since_epoch);
+
+                dprint(FD_RATE, "SW: rate_next_io_time %d, \n", td->rate_next_io_time[__ddir]);
+			}
 		} else {
 			ret = io_u_submit(td, io_u);
 
 			if (should_check_rate(td)){
-				td->rate_next_io_time[ddir] = usec_for_io(td, ddir);
-                dprint(FD_RATE, "SW: no offload, td->rate_next_io_timfewe: %d \n", td->rate_next_io_time[ddir]);}
+
+                uint64_t usec_since_epoch;
+                usec_since_epoch= utime_since(&td->epoch, &io_u->start_time); // utime_since_now(&td->epoch);
+                dprint(FD_IO, "SW: current_io_time: %d ;  &io_u->start_time (usec_since_epoch) %d \n",td->rate_next_io_time[ddir] , usec_since_epoch);
+
+                td->rate_next_io_time[ddir] = usec_for_io(td, ddir, usec_since_epoch);
+
+                dprint(FD_RATE, "SW: rate_next_io_time %d, \n", td->rate_next_io_time[ddir]);
+
+			}
 
 			if (io_queue_event(td, io_u, &ret, ddir, &bytes_issued, 0, &comp_time))
 				break;
@@ -1830,7 +1883,11 @@ static void *thread_main(void *data)
 		if (td->o.verify_only && td_write(td))
 			verify_bytes = do_dry_run(td);
 		else {
-			do_io(td, bytes_done);
+            uint64_t usec_since_epoch;
+            usec_since_epoch= utime_since_now(&td->epoch);
+            dprint(FD_IO, "before do_io(): %d; \n", usec_since_epoch);
+
+            do_io(td, bytes_done);
 
 			if (!ddir_rw_sum(bytes_done)) {
 				fio_mark_td_terminate(td);

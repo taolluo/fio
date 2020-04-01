@@ -1,0 +1,32 @@
+[square_wave]
+size=400m
+directory=/mnt/ramdisk
+ioengine=libaio
+
+numjobs=1
+runtime=5
+
+iodepth=256
+time_based=1
+ramp_time=3
+clocksource=cpu
+
+rw=randread
+
+thread=1 # Needed for spdk, so use for all for congruence.
+
+bs=4096
+
+group_reporting=1
+
+## square wave rate process
+
+rate_process=linear
+
+# alternate between rate_iops and rate_iops_min
+rate_iops=100000
+rate_iops_min=10000
+
+# a period begins with pulse phase
+square_wave_period=2000 # in usec
+square_wave_pulse_width=1000 # in usec

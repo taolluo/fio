@@ -39,11 +39,13 @@ union io_sample_data {
  * A single data sample
  */
 struct io_sample {
-	uint64_t time;
+    uint64_t time;
 	union io_sample_data data;
 	uint32_t __ddir;
 	uint8_t priority_bit;
 	uint64_t bs;
+    uint64_t start_time; // usec start of latency cal
+    uint64_t rate_io_time; // usec rate-controlled start of IO
 };
 
 struct io_sample_offset {

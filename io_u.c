@@ -680,8 +680,19 @@ static enum fio_ddir rate_ddir(struct thread_data *td, enum fio_ddir ddir)
 	if (td->o.io_submit_mode == IO_MODE_INLINE)
 		io_u_quiesce(td);
 
+    uint64_t usec_since_epoch;
+    usec_since_epoch= utime_since_now(&td->epoch);
+    dprint(FD_IO, "before usec_sleep(td, %d): %d; \n", usec, usec_since_epoch);
+
 	usec_sleep(td, usec);
-	return ddir;
+
+
+    usec_since_epoch= utime_since_now(&td->epoch);
+    dprint(FD_IO, "after 1.usec_sleep(td, %d): %d; \n", usec,usec_since_epoch);
+    usec_since_epoch= utime_since_now(&td->epoch);
+    dprint(FD_IO, "after 2.usec_sleep(td, usec): %d; \n", usec_since_epoch);
+
+    return ddir;
 }
 
 /*
@@ -1748,9 +1759,24 @@ struct io_u *get_io_u(struct thread_data *td)
 out:
 	assert(io_u->file);
 	if (!td_io_prep(td, io_u)) {
-		if (!td->o.disable_lat)
-			fio_gettime(&io_u->start_time, NULL);
+		if (!td->o.disable_lat) {
+            fio_gettime(&io_u->start_time, NULL);
+            uint64_t usec_since_epoch;
+            usec_since_epoch= utime_since(&td->epoch, &io_u->start_time); // utime_since_now(&td->epoch);
+            dprint(FD_IO, "setting &io_u->start_time (usec_since_epoch): %d; \n", usec_since_epoch);
 
+//            usec_since_epoch = utime_since_now(&td->epoch);
+//            unsigned long long ms_since_epoch = (unsigned long long) (&io_u->start_time.tv_sec) * 1000 +
+//                                                (unsigned long long) (&io_u->start_time.tv_nsec) / 1000;
+//            dprint(FD_IO, "o_u->start_time_sec: %d; o_u->start_time_nsec: %d\n", &io_u->start_time.tv_sec,
+//                   &io_u->start_time.tv_nsec);
+//            dprint(FD_IO, "o_u->start_time_sec_ull: %d; o_u->start_time_nsec_ull: %d\n", (unsigned long long)&io_u->start_time.tv_sec,
+//                   (unsigned long long)&io_u->start_time.tv_nsec);
+//
+//            dprint(FD_IO, "o_u->start_time_in_usec: %d; \n", ms_since_epoch);
+
+
+        }
 		if (do_scramble)
 			small_content_scramble(io_u);
 
@@ -1830,7 +1856,7 @@ static void account_io_completion(struct thread_data *td, struct io_u *io_u,
 		unsigned long long tnsec;
 
 		tnsec = ntime_since(&io_u->start_time, &icd->time);
-		add_lat_sample(td, idx, tnsec, bytes, io_u->offset, io_u_is_prio(io_u));
+		add_lat_sample(td, idx, tnsec, bytes, io_u->offset, io_u_is_prio(io_u), io_u);
 
 		if (td->flags & TD_F_PROFILE_OPS) {
 			struct prof_io_ops *ops = &td->prof_io_ops;
@@ -1849,7 +1875,7 @@ static void account_io_completion(struct thread_data *td, struct io_u *io_u,
 
 	if (ddir_rw(idx)) {
 		if (!td->o.disable_clat) {
-			add_clat_sample(td, idx, llnsec, bytes, io_u->offset, io_u_is_prio(io_u));
+			add_clat_sample(td, idx, llnsec, bytes, io_u->offset, io_u_is_prio(io_u),io_u);
 			io_u_mark_latency(td, llnsec);
 		}
 
@@ -2091,7 +2117,7 @@ void io_u_queued(struct thread_data *td, struct io_u *io_u)
 			td = td->parent;
 
 		add_slat_sample(td, io_u->ddir, slat_time, io_u->xfer_buflen,
-				io_u->offset, io_u_is_prio(io_u));
+				io_u->offset, io_u_is_prio(io_u), io_u);
 	}
 }
 

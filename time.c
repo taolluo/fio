@@ -34,7 +34,7 @@ uint64_t usec_spin(unsigned int usec)
 	fio_gettime(&start, NULL);
 	while ((t = utime_since_now(&start)) < usec)
 		nop;
-
+    dprint(FD_TIME, "usec_spin t utime_since_now(&start) %d\n", t);
 	return t;
 }
 
@@ -46,9 +46,23 @@ uint64_t usec_sleep(struct thread_data *td, unsigned long usec)
 
 	do {
 		unsigned long ts = usec;
+        dprint(FD_TIME, "ns_granularity:%d  ; usec: %d\n", ns_granularity,usec);
 
 		if (usec < ns_granularity) {
-			t += usec_spin(usec);
+//            dprint(FD_TIME, "target usec_spin usec  for %d usec\n", usec);
+            uint64_t usec_since_epoch;
+
+            usec_since_epoch= utime_since_now(&td->epoch);
+            dprint(FD_TIME, "before spin sleep, t: %d usec\n", t);
+
+            dprint(FD_IO, "before usec_spin(td, %d): usec_since_epoch: %d; \n", usec,usec_since_epoch);
+
+            t += usec_spin(usec);
+
+            usec_since_epoch= utime_since_now(&td->epoch);
+            dprint(FD_IO, "after usec_spin(td, %d): usec_since_epoch: %d; \n", usec,usec_since_epoch);
+
+            dprint(FD_TIME, "after spin sleep, t: %d usec\n", t);
 			break;
 		}
 
@@ -161,10 +175,14 @@ void fio_time_init(void)
 
 		nanosleep(&ts, NULL);
 		elapsed = utime_since_now(&tv);
+        dprint(FD_TIME, "ns_granularity =%d\n", (int) ns_granularity);
+        dprint(FD_TIME, "elapsed =%d\n", (int) elapsed);
 
 		if (elapsed > ns_granularity)
 			ns_granularity = elapsed;
-	}
+        dprint(FD_TIME, "after ns_granularity =%d\n", (int) ns_granularity);
+
+    }
 }
 
 void set_genesis_time(void)
