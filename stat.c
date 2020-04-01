@@ -2697,7 +2697,7 @@ static void __add_stat_to_log(struct io_log *iolog, enum fio_ddir ddir,
 		else
 			data.val = iolog->avg_window[ddir].mean.u.f + 0.50;
 
-		__add_log_sample(iolog, data, ddir, 0, elapsed, 0, priority_bit,0,0);
+		__add_log_sample(iolog, data, ddir, 0, elapsed, 0, priority_bit,999,999);
 	}
 
 	reset_io_stat(&iolog->avg_window[ddir]);
@@ -2730,9 +2730,9 @@ static unsigned long add_log_sample(struct thread_data *td,
 	 */
 	if (!iolog->avg_msec) {
 	    if(io_u) {
-            __add_log_sample(iolog, data, ddir, bs, elapsed, offset, priority_bit, utime_since(&td->epoch, &io_u->start_time), td->rate_next_io_time[DDIR_READ]);
+            __add_log_sample(iolog, data, ddir, bs, elapsed, offset, priority_bit, utime_since(&td->epoch, &io_u->start_time), io_u->rate_io_time);
         } else{
-            __add_log_sample(iolog, data, ddir, bs, elapsed, offset, priority_bit, 111, td->rate_next_io_time[DDIR_READ]);
+            __add_log_sample(iolog, data, ddir, bs, elapsed, offset, priority_bit, 999, 999);
 
         }
 		return 0;
@@ -2791,7 +2791,7 @@ void add_agg_sample(union io_sample_data data, enum fio_ddir ddir, unsigned long
 		return;
 
 	iolog = agg_io_log[ddir];
-	__add_log_sample(iolog, data, ddir, bs, mtime_since_genesis(), 0, priority_bit,2,2);
+	__add_log_sample(iolog, data, ddir, bs, mtime_since_genesis(), 0, priority_bit,999,999);
 }
 
 void add_sync_clat_sample(struct thread_stat *ts, unsigned long long nsec)
@@ -2884,7 +2884,7 @@ void add_clat_sample(struct thread_data *td, enum fio_ddir ddir,
 				FIO_IO_U_PLAT_NR * sizeof(uint64_t));
 			flist_add(&dst->list, &hw->list);
 			__add_log_sample(iolog, sample_plat(dst), ddir, bs,
-						elapsed, offset, priority_bit,3,3);
+						elapsed, offset, priority_bit,999,999);
 
 			/*
 			 * Update the last time we recorded as being now, minus

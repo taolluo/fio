@@ -903,10 +903,11 @@ static int fill_io_u(struct thread_data *td, struct io_u *io_u)
 		goto out;
 
 	set_rw_ddir(td, io_u);
+    io_u->rate_io_time = td->rate_next_io_time[io_u->ddir];
 
-	/*
-	 * fsync() or fdatasync() or trim etc, we are done
-	 */
+    /*
+     * fsync() or fdatasync() or trim etc, we are done
+     */
 	if (!ddir_rw(io_u->ddir))
 		goto out;
 

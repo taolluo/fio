@@ -33,6 +33,7 @@ enum {
 struct io_u {
 	struct timespec start_time;
 	struct timespec issue_time;
+    uint64_t rate_io_time;
 
 	struct fio_file *file;
 	unsigned int flags;
