@@ -1138,9 +1138,12 @@ int ioengine_load(struct thread_data *td)
 		if (!origeo && td != &def_thread && def_thread.eo &&
 		    def_thread.io_ops->options == td->io_ops->options)
 			origeo = def_thread.eo;
+        dprint(FD_PARSE, "init options +\n");
 
 		options_init(td->io_ops->options);
-		td->eo = malloc(td->io_ops->option_struct_size);
+        dprint(FD_PARSE, "init options -\n");
+
+        td->eo = malloc(td->io_ops->option_struct_size);
 		/*
 		 * Use the default thread as an option template if this uses the
 		 * same options structure and there are non-default options
@@ -1160,7 +1163,9 @@ int ioengine_load(struct thread_data *td)
 		td->io_ops->flags |= FIO_RAWIO;
 
 	td_set_ioengine_flags(td);
-	return 0;
+    dprint(FD_PARSE, "ioengine_load -\n");
+
+    return 0;
 }
 
 static void init_flags(struct thread_data *td)

@@ -1913,6 +1913,8 @@ void dup_files(struct thread_data *td, struct thread_data *org)
 
 		td->files[i] = __f;
 	}
+    dprint(FD_FILE, "dup files - \n");
+
 }
 
 /*

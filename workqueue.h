@@ -23,7 +23,7 @@ struct submit_worker {
 	unsigned int index;
 	uint64_t seq;
 	struct workqueue *wq;
-	void *priv;
+	void *priv; //thread_data
 	struct sk_out *sk_out;
 };
 

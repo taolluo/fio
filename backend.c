@@ -49,6 +49,7 @@
 #include "helper_thread.h"
 #include "pshared.h"
 #include "zone-dist.h"
+#include "io_u.h"
 
 static struct fio_sem *startup_sem;
 static struct flist_head *cgroup_list;
@@ -1059,7 +1060,9 @@ static void do_io(struct thread_data *td, uint64_t *bytes_done)
         usec_since_epoch=  utime_since_now(&td->epoch);
         dprint(FD_IO, "before get_io_u(usec_since_epoch): %d; \n", usec_since_epoch);
 
+
 		io_u = get_io_u(td); // may sleep, set io_u->start before return
+//        if (td->o.io_submit_mode == IO_MODE_OFFLOAD) {
 
 		usec_since_epoch=  utime_since_now(&td->epoch);
         dprint(FD_IO, "after get_io_u(usec_since_epoch): %d; \n", usec_since_epoch);
@@ -1246,198 +1249,178 @@ reap:
 		bytes_done[i] = td->bytes_done[i] - bytes_done[i];
 }
 
-static void free_file_completion_logging(struct thread_data *td)
-{
-	struct fio_file *f;
-	unsigned int i;
+//static void free_file_completion_logging(struct thread_data *td)
+//{
+//	struct fio_file *f;
+//	unsigned int i;
+//
+//	for_each_file(td, f, i) {
+//		if (!f->last_write_comp)
+//			break;
+//		sfree(f->last_write_comp);
+//	}
+//}
 
-	for_each_file(td, f, i) {
-		if (!f->last_write_comp)
-			break;
-		sfree(f->last_write_comp);
-	}
-}
+//static int init_file_completion_logging(struct thread_data *td,
+//					unsigned int depth)
+//{
+//	struct fio_file *f;
+//	unsigned int i;
+//
+//	if (td->o.verify == VERIFY_NONE || !td->o.verify_state_save)
+//		return 0;
+//
+//	for_each_file(td, f, i) {
+//		f->last_write_comp = scalloc(depth, sizeof(uint64_t));
+//		if (!f->last_write_comp)
+//			goto cleanup;
+//	}
+//
+//	return 0;
+//
+//cleanup:
+//	free_file_completion_logging(td);
+//	log_err("fio: failed to alloc write comp data\n");
+//	return 1;
+//}
 
-static int init_file_completion_logging(struct thread_data *td,
-					unsigned int depth)
-{
-	struct fio_file *f;
-	unsigned int i;
 
-	if (td->o.verify == VERIFY_NONE || !td->o.verify_state_save)
-		return 0;
-
-	for_each_file(td, f, i) {
-		f->last_write_comp = scalloc(depth, sizeof(uint64_t));
-		if (!f->last_write_comp)
-			goto cleanup;
-	}
-
-	return 0;
-
-cleanup:
-	free_file_completion_logging(td);
-	log_err("fio: failed to alloc write comp data\n");
-	return 1;
-}
-
-static void cleanup_io_u(struct thread_data *td)
-{
-	struct io_u *io_u;
-
-	while ((io_u = io_u_qpop(&td->io_u_freelist)) != NULL) {
-
-		if (td->io_ops->io_u_free)
-			td->io_ops->io_u_free(td, io_u);
-
-		fio_memfree(io_u, sizeof(*io_u), td_offload_overlap(td));
-	}
-
-	free_io_mem(td);
-
-	io_u_rexit(&td->io_u_requeues);
-	io_u_qexit(&td->io_u_freelist, false);
-	io_u_qexit(&td->io_u_all, td_offload_overlap(td));
-
-	free_file_completion_logging(td);
-}
-
-static int init_io_u(struct thread_data *td)
-{
-	struct io_u *io_u;
-	int cl_align, i, max_units;
-	int err;
-
-	max_units = td->o.iodepth;
-
-	err = 0;
-	err += !io_u_rinit(&td->io_u_requeues, td->o.iodepth);
-	err += !io_u_qinit(&td->io_u_freelist, td->o.iodepth, false);
-	err += !io_u_qinit(&td->io_u_all, td->o.iodepth, td_offload_overlap(td));
-
-	if (err) {
-		log_err("fio: failed setting up IO queues\n");
-		return 1;
-	}
-
-	cl_align = os_cache_line_size();
-
-	for (i = 0; i < max_units; i++) {
-		void *ptr;
-
-		if (td->terminate)
-			return 1;
-
-		ptr = fio_memalign(cl_align, sizeof(*io_u), td_offload_overlap(td));
-		if (!ptr) {
-			log_err("fio: unable to allocate aligned memory\n");
-			return 1;
-		}
-
-		io_u = ptr;
-		memset(io_u, 0, sizeof(*io_u));
-		INIT_FLIST_HEAD(&io_u->verify_list);
-		dprint(FD_MEM, "io_u alloc %p, index %u\n", io_u, i);
-
-		io_u->index = i;
-		io_u->flags = IO_U_F_FREE;
-		io_u_qpush(&td->io_u_freelist, io_u);
-
-		/*
-		 * io_u never leaves this stack, used for iteration of all
-		 * io_u buffers.
-		 */
-		io_u_qpush(&td->io_u_all, io_u);
-
-		if (td->io_ops->io_u_init) {
-			int ret = td->io_ops->io_u_init(td, io_u);
-
-			if (ret) {
-				log_err("fio: failed to init engine data: %d\n", ret);
-				return 1;
-			}
-		}
-	}
-
-	init_io_u_buffers(td);
-
-	if (init_file_completion_logging(td, max_units))
-		return 1;
-
-	return 0;
-}
-
-int init_io_u_buffers(struct thread_data *td)
-{
-	struct io_u *io_u;
-	unsigned long long max_bs, min_write;
-	int i, max_units;
-	int data_xfer = 1;
-	char *p;
-
-	max_units = td->o.iodepth;
-	max_bs = td_max_bs(td);
-	min_write = td->o.min_bs[DDIR_WRITE];
-	td->orig_buffer_size = (unsigned long long) max_bs
-					* (unsigned long long) max_units;
-
-	if (td_ioengine_flagged(td, FIO_NOIO) || !(td_read(td) || td_write(td)))
-		data_xfer = 0;
-
-	/*
-	 * if we may later need to do address alignment, then add any
-	 * possible adjustment here so that we don't cause a buffer
-	 * overflow later. this adjustment may be too much if we get
-	 * lucky and the allocator gives us an aligned address.
-	 */
-	if (td->o.odirect || td->o.mem_align || td->o.oatomic ||
-	    td_ioengine_flagged(td, FIO_RAWIO))
-		td->orig_buffer_size += page_mask + td->o.mem_align;
-
-	if (td->o.mem_type == MEM_SHMHUGE || td->o.mem_type == MEM_MMAPHUGE) {
-		unsigned long long bs;
-
-		bs = td->orig_buffer_size + td->o.hugepage_size - 1;
-		td->orig_buffer_size = bs & ~(td->o.hugepage_size - 1);
-	}
-
-	if (td->orig_buffer_size != (size_t) td->orig_buffer_size) {
-		log_err("fio: IO memory too large. Reduce max_bs or iodepth\n");
-		return 1;
-	}
-
-	if (data_xfer && allocate_io_mem(td))
-		return 1;
-
-	if (td->o.odirect || td->o.mem_align || td->o.oatomic ||
-	    td_ioengine_flagged(td, FIO_RAWIO))
-		p = PTR_ALIGN(td->orig_buffer, page_mask) + td->o.mem_align;
-	else
-		p = td->orig_buffer;
-
-	for (i = 0; i < max_units; i++) {
-		io_u = td->io_u_all.io_us[i];
-		dprint(FD_MEM, "io_u alloc %p, index %u\n", io_u, i);
-
-		if (data_xfer) {
-			io_u->buf = p;
-			dprint(FD_MEM, "io_u %p, mem %p\n", io_u, io_u->buf);
-
-			if (td_write(td))
-				io_u_fill_buffer(td, io_u, min_write, max_bs);
-			if (td_write(td) && td->o.verify_pattern_bytes) {
-				/*
-				 * Fill the buffer with the pattern if we are
-				 * going to be doing writes.
-				 */
-				fill_verify_pattern(td, io_u->buf, max_bs, io_u, 0, 0);
-			}
-		}
-		p += max_bs;
-	}
-
-	return 0;
-}
+//static int init_io_u(struct thread_data *td)
+//{
+//	struct io_u *io_u;
+//	int cl_align, i, max_units;
+//	int err;
+//
+//	max_units = td->o.iodepth;
+//
+//	err = 0;
+//	err += !io_u_rinit(&td->io_u_requeues, td->o.iodepth);
+//	err += !io_u_qinit(&td->io_u_freelist, td->o.iodepth, false);
+//	err += !io_u_qinit(&td->io_u_all, td->o.iodepth, td_offload_overlap(td));
+//
+//	if (err) {
+//		log_err("fio: failed setting up IO queues\n");
+//		return 1;
+//	}
+//
+//	cl_align = os_cache_line_size();
+//
+//	for (i = 0; i < max_units; i++) {
+//		void *ptr;
+//
+//		if (td->terminate)
+//			return 1;
+//
+//		ptr = fio_memalign(cl_align, sizeof(*io_u), td_offload_overlap(td));
+//		if (!ptr) {
+//			log_err("fio: unable to allocate aligned memory\n");
+//			return 1;
+//		}
+//
+//		io_u = ptr;
+//		memset(io_u, 0, sizeof(*io_u));
+//		INIT_FLIST_HEAD(&io_u->verify_list);
+//		dprint(FD_MEM, "io_u alloc %p, index %u\n", io_u, i);
+//
+//		io_u->index = i;
+//		io_u->flags = IO_U_F_FREE;
+//		io_u_qpush(&td->io_u_freelist, io_u);
+//
+//		/*
+//		 * io_u never leaves this stack, used for iteration of all
+//		 * io_u buffers.
+//		 */
+//		io_u_qpush(&td->io_u_all, io_u);
+//
+//		if (td->io_ops->io_u_init) {
+//			int ret = td->io_ops->io_u_init(td, io_u);
+//
+//			if (ret) {
+//				log_err("fio: failed to init engine data: %d\n", ret);
+//				return 1;
+//			}
+//		}
+//	}
+//
+//	init_io_u_buffers(td);
+//
+//	if (init_file_completion_logging(td, max_units))
+//		return 1;
+//
+//	return 0;
+//}
+//
+//int init_io_u_buffers(struct thread_data *td)
+//{
+//	struct io_u *io_u;
+//	unsigned long long max_bs, min_write;
+//	int i, max_units;
+//	int data_xfer = 1;
+//	char *p;
+//
+//	max_units = td->o.iodepth;
+//	max_bs = td_max_bs(td);
+//	min_write = td->o.min_bs[DDIR_WRITE];
+//	td->orig_buffer_size = (unsigned long long) max_bs
+//					* (unsigned long long) max_units;
+//
+//	if (td_ioengine_flagged(td, FIO_NOIO) || !(td_read(td) || td_write(td)))
+//		data_xfer = 0;
+//
+//	/*
+//	 * if we may later need to do address alignment, then add any
+//	 * possible adjustment here so that we don't cause a buffer
+//	 * overflow later. this adjustment may be too much if we get
+//	 * lucky and the allocator gives us an aligned address.
+//	 */
+//	if (td->o.odirect || td->o.mem_align || td->o.oatomic ||
+//	    td_ioengine_flagged(td, FIO_RAWIO))
+//		td->orig_buffer_size += page_mask + td->o.mem_align;
+//
+//	if (td->o.mem_type == MEM_SHMHUGE || td->o.mem_type == MEM_MMAPHUGE) {
+//		unsigned long long bs;
+//
+//		bs = td->orig_buffer_size + td->o.hugepage_size - 1;
+//		td->orig_buffer_size = bs & ~(td->o.hugepage_size - 1);
+//	}
+//
+//	if (td->orig_buffer_size != (size_t) td->orig_buffer_size) {
+//		log_err("fio: IO memory too large. Reduce max_bs or iodepth\n");
+//		return 1;
+//	}
+//
+//	if (data_xfer && allocate_io_mem(td))
+//		return 1;
+//
+//	if (td->o.odirect || td->o.mem_align || td->o.oatomic ||
+//	    td_ioengine_flagged(td, FIO_RAWIO))
+//		p = PTR_ALIGN(td->orig_buffer, page_mask) + td->o.mem_align;
+//	else
+//		p = td->orig_buffer;
+//
+//	for (i = 0; i < max_units; i++) {
+//		io_u = td->io_u_all.io_us[i];
+//		dprint(FD_MEM, "io_u alloc %p, index %u\n", io_u, i);
+//
+//		if (data_xfer) {
+//			io_u->buf = p;
+//			dprint(FD_MEM, "io_u %p, mem %p\n", io_u, io_u->buf);
+//
+//			if (td_write(td))
+//				io_u_fill_buffer(td, io_u, min_write, max_bs);
+//			if (td_write(td) && td->o.verify_pattern_bytes) {
+//				/*
+//				 * Fill the buffer with the pattern if we are
+//				 * going to be doing writes.
+//				 */
+//				fill_verify_pattern(td, io_u->buf, max_bs, io_u, 0, 0);
+//			}
+//		}
+//		p += max_bs;
+//	}
+//
+//	return 0;
+//}
 
 /*
  * This function is Linux specific.
@@ -1642,6 +1625,7 @@ static void *thread_main(void *data)
 	int deadlock_loop_cnt;
 	bool clear_state;
 	int ret;
+    dprint(FD_IO, "segfault2 call thread main \n");
 
 	sk_out_assign(sk_out);
 	free(fd);
@@ -1802,6 +1786,8 @@ static void *thread_main(void *data)
 	if (init_io_u(td))
 		goto err;
 
+    dprint(FD_IO, "segfault2 call post_init in thread_main\n");
+
 	if (td->io_ops->post_init && td->io_ops->post_init(td))
 		goto err;
 
@@ -1842,9 +1828,12 @@ static void *thread_main(void *data)
 		goto err;
 
 	fio_verify_init(td);
+    dprint(FD_IO, "rate_submit_init +\n");
 
-	if (rate_submit_init(td, sk_out))
+	if (rate_submit_init(td, sk_out)) // workqueue init for io_mode_offload
 		goto err;
+
+    dprint(FD_IO, "rate_submit_init -\n");
 
 	set_epoch_time(td, o->log_unix_epoch);
 	fio_getrusage(&td->ru_start);
