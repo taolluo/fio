@@ -387,12 +387,16 @@ static int fio_libaio_post_init(struct thread_data *td)
 {
 	struct libaio_data *ld = td->io_ops_data;
 	int err;
+	dprint(FD_IO, "fio_libaio_post_init +\n");
 
-	err = io_queue_init(td->o.iodepth, &ld->aio_ctx);
-	if (err) {
+	err = io_queue_init(td->o.iodepth, &ld->aio_ctx); // wrapper of io_setup()
+    dprint(FD_IO, "fio_libaio_post_init td->o.iodepth %d\n", td->o.iodepth);
+
+    if (err) {
 		td_verror(td, -err, "io_queue_init");
 		return 1;
 	}
+	dprint(FD_IO, "fio_libaio_post_init -\n");
 
 	return 0;
 }
@@ -429,14 +433,14 @@ static struct ioengine_ops ioengine = {
 	.name			= "libaio",
 	.version		= FIO_IOOPS_VERSION,
 	.flags			= FIO_ASYNCIO_SYNC_TRIM,
-	.init			= fio_libaio_init,
-	.post_init		= fio_libaio_post_init,
+	.init			= fio_libaio_init, // create libaio_data
+	.post_init		= fio_libaio_post_init, // create queue aio_ctx
 	.prep			= fio_libaio_prep,  //io_prep_pread create iocb
-	.queue			= fio_libaio_queue, // add iocb io_u queued++
+	.queue			= fio_libaio_queue, // add iocb io_u to ld head, queued++
 	.commit			= fio_libaio_commit, // io_submit
 	.cancel			= fio_libaio_cancel,
 	.getevents		= fio_libaio_getevents, //io_getevent
-	.event			= fio_libaio_event,
+	.event			= fio_libaio_event, // event/index -> io_u
 	.cleanup		= fio_libaio_cleanup,
 	.open_file		= generic_open_file,
 	.close_file		= generic_close_file,

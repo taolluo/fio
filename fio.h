@@ -710,7 +710,7 @@ extern void lat_target_reset(struct thread_data *);
 #define for_each_td(td, i)	\
 	for ((i) = 0, (td) = &threads[0]; (i) < (int) thread_number; (i)++, (td)++)
 #define for_each_file(td, f, i)	\
-	if ((td)->files_index)						\
+	if ((td)->files_index)					\
 		for ((i) = 0, (f) = (td)->files[0];			\
 	    	 (i) < (td)->o.nr_files && ((f) = (td)->files[i]) != NULL; \
 		 (i)++)

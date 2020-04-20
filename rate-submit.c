@@ -8,6 +8,8 @@
 #include "ioengines.h"
 #include "lib/getrusage.h"
 #include "rate-submit.h"
+#include "engines/io_uring.h"
+#include "os/linux/io_uring.h"
 
 static void check_overlap(struct io_u *io_u)
 {
@@ -54,6 +56,25 @@ static int io_workqueue_fn(struct submit_worker *sw,
 	const enum fio_ddir ddir = io_u->ddir;
 	struct thread_data *td = sw->priv;
 	int ret, error;
+    struct ioring_data *ld, *parent_ld;
+    struct thread_data * parent_td;
+    struct io_uring_sqe *sqe;
+
+//    if (strcmp(td->io_ops->name, "io_uring") == 0 ){
+//        ld = (struct ioring_data *) td->io_ops_data;
+
+//        parent_td = sw->wq->td;
+//        parent_ld = (struct ioring_data *) parent_td->io_ops_data;
+
+//        sqe = &parent_ld->sqes[io_u->index];
+//        ld->sqes[0] = *sqe; // fix??
+
+        td_io_prep(td, io_u); // add sqe
+
+//        io_u = get_io_u(td);
+
+//    }
+
 
 	if (td->o.serialize_overlap)
 		check_overlap(io_u);
@@ -65,9 +86,13 @@ static int io_workqueue_fn(struct submit_worker *sw,
 	td->cur_depth++;
 
 	do {
-		ret = td_io_queue(td, io_u);
-		if (ret != FIO_Q_BUSY)
-			break;
+        dprint(FD_RATE, "io_workqueue_fn loop start, io_u %p \n", io_u);
+
+        ret = td_io_queue(td, io_u); // commit() return  FIO_Q_QUEUED
+        dprint(FD_RATE, "td_io_queue rets %d \n", ret);
+
+        if (ret != FIO_Q_BUSY)
+            break;
 		ret = io_u_queued_complete(td, 1);
 		if (ret > 0)
 			td->cur_depth -= ret;
@@ -89,9 +114,11 @@ static int io_workqueue_fn(struct submit_worker *sw,
 			min_evts = 1;
 		else
 			min_evts = 0;
-
+        dprint(FD_RATE, "segfault2 io_u_queued_complete in rate-sub  +  \n");
 		ret = io_u_queued_complete(td, min_evts);
-		if (ret > 0)
+        dprint(FD_RATE, "segfault2 io_u_queued_complete rate-sub  - \n");
+
+        if (ret > 0)
 			td->cur_depth -= ret;
 	}
 
@@ -148,7 +175,12 @@ static int io_workqueue_init_worker_fn(struct submit_worker *sw)
 	td->o.uid = td->o.gid = -1U;
 	dup_files(td, parent);
 	td->eo = parent->eo;
-	fio_options_mem_dupe(td);
+    td->parent = parent;
+
+    dprint(FD_IO, "io_workqueue_init_worker_fn fio_options_mem_dupe +\n");
+
+    fio_options_mem_dupe(td);
+    dprint(FD_IO, "io_workqueue_init_worker_fn fio_options_mem_dupe -\n");
 
 	if (ioengine_load(td))
 		goto err;
@@ -165,8 +197,18 @@ static int io_workqueue_init_worker_fn(struct submit_worker *sw)
 	if (td_io_init(td))
 		goto err_io_init;
 
-	if (td->io_ops->post_init && td->io_ops->post_init(td))
+    if (init_io_u(td))
+        goto err_io_init;
+
+    if (td->io_ops->post_init)
+	    dprint(FD_IO, "o_ops->post_init +\n");
+
+    dprint(FD_IO, "segfault2 call post_init in io_workqueue_init_worker_fn\n");
+
+	if (td->io_ops->post_init && td->io_ops->post_init(td)){
+        dprint(FD_IO, "o_ops->post_init -\n");
 		goto err_io_init;
+    }
 
 	set_epoch_time(td, td->o.log_unix_epoch);
 	fio_getrusage(&td->ru_start);
@@ -174,8 +216,11 @@ static int io_workqueue_init_worker_fn(struct submit_worker *sw)
 
 	td_set_runstate(td, TD_RUNNING);
 	td->flags |= TD_F_CHILD | TD_F_NEED_LOCK;
-	td->parent = parent;
-	return 0;
+    dprint(FD_IO, "fio_verify_init +\n");
+	fio_verify_init(td); //  needed ??
+    dprint(FD_IO, "fio_verify_init -\n");
+
+    return 0;
 
 err_io_init:
 	close_ioengine(td);
@@ -274,7 +319,7 @@ static struct workqueue_ops rated_wq_ops = {
 	.update_acct_fn		= io_workqueue_update_acct_fn,
 	.alloc_worker_fn	= io_workqueue_alloc_fn,
 	.free_worker_fn		= io_workqueue_free_fn,
-	.init_worker_fn		= io_workqueue_init_worker_fn,
+	.init_worker_fn		= io_workqueue_init_worker_fn, // sw->priv io_ops->post_init(td)
 	.exit_worker_fn		= io_workqueue_exit_worker_fn,
 };
 

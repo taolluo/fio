@@ -68,7 +68,8 @@ static struct ioengine_ops *find_ioengine(const char *name)
 
 	flist_for_each(entry, &engine_list) {
 		ops = flist_entry(entry, struct ioengine_ops, list);
-		if (!strcmp(name, ops->name))
+//        dprint(FD_IO, "strcmp(%s, ops->%s)\n", name,ops->name );
+        if (!strcmp(name, ops->name))
 			return ops;
 	}
 

@@ -133,7 +133,7 @@ static void *worker_thread(void *data)
 	struct workqueue *wq = sw->wq;
 	unsigned int ret = 0;
 	FLIST_HEAD(local_list);
-
+    dprint(FD_IO, "call worker_thread() +\n");
 	sk_out_assign(sw->sk_out);
 
 	if (wq->ops.nice) {
@@ -143,9 +143,13 @@ static void *worker_thread(void *data)
 		}
 	}
 
-	if (!ret)
-		ret = workqueue_init_worker(sw);
+	if (!ret) {
+        dprint(FD_IO, "workqueue_init_worker() +\n");
 
+        ret = workqueue_init_worker(sw);
+        dprint(FD_IO, "workqueue_init_worker() -\n");
+
+    }
 	pthread_mutex_lock(&sw->lock);
 	sw->flags |= SW_F_RUNNING;
 	if (ret)
@@ -160,7 +164,9 @@ static void *worker_thread(void *data)
 		goto done;
 
 	while (1) {
-		pthread_mutex_lock(&sw->lock);
+        dprint(FD_IO, "worker_thread while loop +\n");
+
+        pthread_mutex_lock(&sw->lock);
 
 		if (flist_empty(&sw->work_list)) {
 			if (sw->flags & SW_F_EXIT) {
@@ -170,7 +176,7 @@ static void *worker_thread(void *data)
 
 			if (workqueue_pre_sleep_check(sw)) {
 				pthread_mutex_unlock(&sw->lock);
-				workqueue_pre_sleep(sw);
+				workqueue_pre_sleep(sw); // if listempty sleep then wake up check list
 				pthread_mutex_lock(&sw->lock);
 			}
 
@@ -192,19 +198,24 @@ static void *worker_thread(void *data)
 			}
 
 			pthread_cond_wait(&sw->cond, &sw->lock);
-		} else {
+		} else { // sw->work_list not empty
 handle_work:
 			flist_splice_init(&sw->work_list, &local_list);
 		}
 		pthread_mutex_unlock(&sw->lock);
-		handle_list(sw, &local_list);
-		if (wq->ops.update_acct_fn)
+        dprint(FD_RATE, "call handle_list() +\n");
+        handle_list(sw, &local_list);
+        dprint(FD_RATE, "call handle_list() -\n");
+
+        if (wq->ops.update_acct_fn)
 			wq->ops.update_acct_fn(sw);
 	}
 
 done:
 	sk_out_drop();
-	return NULL;
+    dprint(FD_IO, "call worker_thread() -\n");
+
+    return NULL;
 }
 
 static void free_worker(struct submit_worker *sw, unsigned int *sum_cnt)
@@ -286,8 +297,10 @@ static int start_worker(struct workqueue *wq, unsigned int index,
 		if (ret)
 			return ret;
 	}
+    dprint(FD_IO, "pthread_create +\n");
 
 	ret = pthread_create(&sw->thread, NULL, worker_thread, sw);
+    dprint(FD_IO, "pthread_create -\n");
 	if (!ret) {
 		pthread_mutex_lock(&sw->lock);
 		sw->flags = SW_F_IDLE;
@@ -323,10 +336,14 @@ int workqueue_init(struct thread_data *td, struct workqueue *wq,
 	wq->workers = smalloc(wq->max_workers * sizeof(struct submit_worker));
 	if (!wq->workers)
 		goto err;
+    dprint(FD_IO, "start_worker loop +\n");
 
-	for (i = 0; i < wq->max_workers; i++)
-		if (start_worker(wq, i, sk_out))
-			break;
+    for (i = 0; i < wq->max_workers; i++) {
+        dprint(FD_IO, "start_worker +\n");
+        if (start_worker(wq, i, sk_out))
+            break;
+    }
+    dprint(FD_IO, "start_worker loop -\n");
 
 	wq->max_workers = i;
 	if (!wq->max_workers)

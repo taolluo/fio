@@ -162,6 +162,11 @@ bool queue_full(const struct thread_data *);
 int do_io_u_sync(const struct thread_data *, struct io_u *);
 int do_io_u_trim(const struct thread_data *, struct io_u *);
 
+
+extern int init_io_u(struct thread_data *);
+extern void cleanup_io_u(struct thread_data *);
+
+
 #ifdef FIO_INC_DEBUG
 static inline void dprint_io_u(struct io_u *io_u, const char *p)
 {

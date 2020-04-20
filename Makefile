@@ -28,7 +28,7 @@ PROGS	= fio
 SCRIPTS = $(addprefix $(SRCDIR)/,tools/fio_generate_plots tools/plot/fio2gnuplot tools/genfio tools/fiologparser.py tools/hist/fiologparser_hist.py tools/fio_jsonplus_clat2csv)
 
 ifndef CONFIG_FIO_NO_OPT
-  CFLAGS += -O3 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=2
+  CFLAGS += -O0 -ggdb3 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=2
 endif
 ifdef CONFIG_BUILD_NATIVE
   CFLAGS += -march=native
@@ -476,7 +476,7 @@ t/ieee754: $(T_IEEE_OBJS)
 	$(QUIET_LINK)$(CC) $(LDFLAGS) $(CFLAGS) -o $@ $(T_IEEE_OBJS) $(LIBS)
 
 fio: $(FIO_OBJS)
-	$(QUIET_LINK)$(CC) $(LDFLAGS) $(CFLAGS) -o $@ $(FIO_OBJS) $(LIBS) $(HDFSLIB)
+	$(QUIET_LINK)$(CC) -g -ggdb3 $(LDFLAGS) $(CFLAGS) -o $@ $(FIO_OBJS) $(LIBS) $(HDFSLIB)
 
 gfio: $(GFIO_OBJS)
 	$(QUIET_LINK)$(CC) $(filter-out -static, $(LDFLAGS)) -o gfio $(GFIO_OBJS) $(LIBS) $(GFIO_LIBS) $(GTK_LDFLAGS) $(HDFSLIB)

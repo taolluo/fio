@@ -785,8 +785,11 @@ static int __handle_option(const struct fio_option *o, const char *ptr,
 
 		if (o->off1) {
 			cp = td_var(data, o, o->off1);
-			*cp = strdup(ptr);
-		}
+            dprint(FD_PARSE, "valgrind __handle_option strdup for FIO_OPT_STR_STORE +\n");
+
+            *cp = strdup(ptr);
+            dprint(FD_PARSE, "valgrind __handle_option strdup for FIO_OPT_STR_STORE -\n");
+        }
 
 		if (fn)
 			ret = fn(data, ptr);
@@ -1126,10 +1129,13 @@ static void add_to_dump_list(const struct fio_option *o,
 
 	if (!dump_list)
 		return;
+    dprint(FD_PARSE, "valgrind add_to_dump_list malloc +\n");
 
 	p = malloc(sizeof(*p));
 	p->name = strdup(o->name);
-	if (post)
+    dprint(FD_PARSE, "valgrind add_to_dump_list malloc -\n");
+
+    if (post)
 		p->value = strdup(post);
 	else
 		p->value = NULL;
@@ -1449,9 +1455,16 @@ void options_mem_dupe(const struct fio_option *options, void *data)
 			continue;
 
 		ptr = td_var(data, o, o->off1);
-		if (*ptr)
-			*ptr = strdup(*ptr);
+		if (*ptr) {
+            dprint(FD_PARSE, "valgrind options_mem_dupe strdup + %s \n", ptr);
+
+            *ptr = strdup(*ptr);
+            dprint(FD_PARSE, "valgrind options_mem_dupe strdup - %s \n",ptr);
+
+        }
 	}
+    dprint(FD_PARSE, "dup options -\n");
+
 }
 
 void options_free(const struct fio_option *options, void *data)

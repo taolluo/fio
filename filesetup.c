@@ -1886,8 +1886,8 @@ void dup_files(struct thread_data *td, struct thread_data *org)
 		return;
 
 	td->files = malloc(org->files_index * sizeof(f));
-
-	if (td->o.file_lock_mode != FILE_LOCK_NONE)
+    td->files_index = org->files_index;
+    if (td->o.file_lock_mode != FILE_LOCK_NONE)
 		td->file_locks = malloc(org->files_index);
 
 	for_each_file(org, f, i) {
@@ -1913,6 +1913,8 @@ void dup_files(struct thread_data *td, struct thread_data *org)
 
 		td->files[i] = __f;
 	}
+    dprint(FD_FILE, "dup files - \n");
+
 }
 
 /*

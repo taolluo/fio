@@ -22,67 +22,8 @@
 
 #include "../lib/types.h"
 #include "../os/linux/io_uring.h"
-
-struct io_sq_ring {
-	unsigned *head;
-	unsigned *tail;
-	unsigned *ring_mask;
-	unsigned *ring_entries;
-	unsigned *flags;
-	unsigned *array;
-};
-
-struct io_cq_ring {
-	unsigned *head;
-	unsigned *tail;
-	unsigned *ring_mask;
-	unsigned *ring_entries;
-	struct io_uring_cqe *cqes;
-};
-
-struct ioring_mmap {
-	void *ptr;
-	size_t len;
-};
-
-struct ioring_data {
-	int ring_fd;
-
-	struct io_u **io_u_index;
-
-	int *fds;
-
-	struct io_sq_ring sq_ring;
-	struct io_uring_sqe *sqes;
-	struct iovec *iovecs;
-	unsigned sq_ring_mask;
-
-	struct io_cq_ring cq_ring;
-	unsigned cq_ring_mask;
-
-	int queued;
-	int cq_ring_off;
-	unsigned iodepth;
-	bool ioprio_class_set;
-	bool ioprio_set;
-
-	struct ioring_mmap mmap[3];
-};
-
-struct ioring_options {
-	void *pad;
-	unsigned int hipri;
-	unsigned int cmdprio_percentage;
-	unsigned int fixedbufs;
-	unsigned int registerfiles;
-	unsigned int sqpoll_thread;
-	unsigned int sqpoll_set;
-	unsigned int sqpoll_cpu;
-	unsigned int sqpoll_idle_set;
-	unsigned int sqpoll_idle;
-	unsigned int nonvectored;
-	unsigned int uncached;
-};
+#include "io_uring.h"
+//#include "arch-x86_64.h"
 
 static const int ddir_to_op[2][2] = {
 	{ IORING_OP_READV, IORING_OP_READ },
@@ -186,7 +127,7 @@ static struct fio_option options[] = {
 		.help	= "How long in microsecond should SQ thread idle wait for",
 		.category = FIO_OPT_C_ENGINE,
 		.group	= FIO_OPT_G_IOURING,
-	},	
+	},
 	{
 		.name	= "nonvectored",
 		.lname	= "Non-vectored",
@@ -220,18 +161,45 @@ static int io_uring_enter(struct ioring_data *ld, unsigned int to_submit,
 static int fio_ioring_prep(struct thread_data *td, struct io_u *io_u)
 {
 	struct ioring_data *ld = td->io_ops_data;
-	struct ioring_options *o = td->eo;
+    struct ioring_data *parent_ld;
+
+    struct ioring_options *o = td->eo;
 	struct fio_file *f = io_u->file;
 	struct io_uring_sqe *sqe;
-
-	sqe = &ld->sqes[io_u->index];
+    unsigned sqe_len=0;
+    int i;
+    sqe = &ld->sqes[  io_u->index % td->o.iodepth ]; // for iod=1. idx=0
 
 	/* zero out fields not used in this submission */
 	memset(sqe, 0, sizeof(*sqe));
 
-	if (o->registerfiles) {
-		sqe->fd = f->engine_pos;
-		sqe->flags = IOSQE_FIXED_FILE;
+	if (o->registerfiles)
+	{
+        sqe->flags = IOSQE_FIXED_FILE;
+        if(td->parent) // child
+	    {
+//            parent_ld =  td->parent->io_ops_data;
+
+            for_each_file(td, f, i) {
+//                assert(parent_ld->fds[i]);
+                assert(io_u->file->fd >0);
+                    if (io_u->file->fd == ld->fds[i]){ //fixme
+                        sqe->fd = i;
+                        break;
+                    }
+
+                }
+
+	    }
+//        if(td->parent){
+//            for_each_file(td, f, i) {
+//                    ld->fds[i] = parent_ld->fds[i];
+//                    f->engine_pos = i;
+//                }
+//        }
+	    else{ // parent
+            sqe->fd = f->engine_pos;
+	    }
 	} else {
 		sqe->fd = f->fd;
 	}
@@ -239,17 +207,21 @@ static int fio_ioring_prep(struct thread_data *td, struct io_u *io_u)
 	if (io_u->ddir == DDIR_READ || io_u->ddir == DDIR_WRITE) {
 		if (o->fixedbufs) {
 			sqe->opcode = fixed_ddir_to_op[io_u->ddir];
-			sqe->addr = (unsigned long) io_u->xfer_buf;
-			sqe->len = io_u->xfer_buflen;
-			sqe->buf_index = io_u->index;
+//			sqe->addr = (unsigned long) io_u->xfer_buf; fixme?
+//			sqe->len = io_u->xfer_buflen;
+
+            sqe->addr = (unsigned long) io_u->buf;
+            sqe->len = td_max_bs(td);
+
+			sqe->buf_index = io_u->index % td->o.iodepth;
 		} else {
 			sqe->opcode = ddir_to_op[io_u->ddir][!!o->nonvectored];
 			if (o->nonvectored) {
 				sqe->addr = (unsigned long)
-						ld->iovecs[io_u->index].iov_base;
-				sqe->len = ld->iovecs[io_u->index].iov_len;
+						ld->iovecs[io_u->index % td->o.iodepth].iov_base;
+				sqe->len = ld->iovecs[io_u->index % td->o.iodepth].iov_len;
 			} else {
-				sqe->addr = (unsigned long) &ld->iovecs[io_u->index];
+				sqe->addr = (unsigned long) &ld->iovecs[io_u->index % td->o.iodepth];
 				sqe->len = 1;
 			}
 		}
@@ -274,29 +246,61 @@ static int fio_ioring_prep(struct thread_data *td, struct io_u *io_u)
 	}
 
 	sqe->user_data = (unsigned long) io_u;
-	return 0;
+    dprint(FD_IO,"sqe->len %d", sqe->len );
+    sqe_len = sqe->len;
+    return 0;
 }
 
 static struct io_u *fio_ioring_event(struct thread_data *td, int event)
 {
 	struct ioring_data *ld = td->io_ops_data;
-	struct io_uring_cqe *cqe;
-	struct io_u *io_u;
-	unsigned index;
+    struct ioring_data *parent_ld;// = td->io_ops_data;
 
-	index = (event + ld->cq_ring_off) & ld->cq_ring_mask;
+    struct io_uring_cqe *cqe;
+	struct io_u *io_u;
+	struct ioring_options *o;
+    o = td->eo;
+	unsigned index;
+    unsigned cqe_res;
+    struct fio_file *pf;
+    int i;
+
+    index = (event + ld->cq_ring_off) & ld->cq_ring_mask; // cq-ring-off = cqring->head
+    dprint(FD_IO, "segfault2 event %d index %d, ld->cq_ring_off %d\n", event, index,ld->cq_ring_off );
 
 	cqe = &ld->cq_ring.cqes[index];
-	io_u = (struct io_u *) (uintptr_t) cqe->user_data;
+    dprint(FD_IO, "segfault2 cqe get \n", index);
 
+    io_u = (struct io_u *) (uintptr_t) cqe->user_data;
+    dprint(FD_IO, "segfault2 io_u get \n", index);
+    dprint(FD_IO, "segfault2 cqe->user_data mem %p;\n", cqe->user_data);
+
+//    dprint(FD_IO, "segfault2 cqe->user_data io_u mem %p; io_u->xfer_buflen %d; cqe->res: %d; \n", io_u, io_u->xfer_buflen, cqe->res);
+    dprint(FD_IO, "segfault2 cqe->user_data io_u mem %p; \n", io_u);
+    cqe_res = cqe->res;
 	if (cqe->res != io_u->xfer_buflen) {
-		if (cqe->res > io_u->xfer_buflen)
+        dprint(FD_IO, "segfault2 xfer_buflen cqe->res len disagree\n", io_u);
+
+        if (cqe->res > io_u->xfer_buflen)
 			io_u->error = -cqe->res;
 		else
 			io_u->resid = io_u->xfer_buflen - cqe->res;
 	} else
 		io_u->error = 0;
 
+    if (td->parent && o->registerfiles){
+        parent_ld =  td->parent->io_ops_data;
+
+
+        for_each_file(td->parent, pf, i) {
+                assert(parent_ld->fds[i]>0);
+                assert(io_u->file->fd >0);
+                if (io_u->file->fd == parent_ld->fds[i]){ //fixme??
+                    io_u->file->engine_pos = i;
+                    break;
+                }
+            }
+    }
 	return io_u;
 }
 
@@ -310,11 +314,14 @@ static int fio_ioring_cqring_reap(struct thread_data *td, unsigned int events,
 	head = *ring->head;
 	do {
 		read_barrier();
-		if (head == *ring->tail)
+		if (head == *ring->tail){
+            dprint(FD_IO, "fio_ioring_cqring_reap: head==tail exit\n");
 			break;
+        }
 		reaped++;
 		head++;
-	} while (reaped + events < max);
+        dprint(FD_IO, "fio_ioring_cqring_reap: head++ reaped++\n");
+    } while (reaped + events < max);
 
 	*ring->head = head;
 	write_barrier();
@@ -328,12 +335,23 @@ static int fio_ioring_getevents(struct thread_data *td, unsigned int min,
 	unsigned actual_min = td->o.iodepth_batch_complete_min == 0 ? 0 : min;
 	struct ioring_options *o = td->eo;
 	struct io_cq_ring *ring = &ld->cq_ring;
-	unsigned events = 0;
-	int r;
+    struct io_sq_ring *sq_ring = &ld->sq_ring;
 
+    unsigned events = 0;
+    unsigned  sqe_idx = 0;
+    sqe_idx = sq_ring->array[0];
+	int r = 0;
+    unsigned sqring_head, sqring_tail, io_u_idx;
+
+    while(*(sq_ring->head) != *(sq_ring->tail)){
+        nop;
+    }
+    sqring_head = *(sq_ring->head);
+    sqring_tail = *(sq_ring->tail);
 	ld->cq_ring_off = *ring->head;
+    io_u_idx = sq_ring->array[*ring->tail & ld->sq_ring_mask];
 	do {
-		r = fio_ioring_cqring_reap(td, events, max);
+		r = fio_ioring_cqring_reap(td, events, max); // bug infinite loop here!
 		if (r) {
 			events += r;
 			if (actual_min != 0)
@@ -361,7 +379,7 @@ static void fio_ioring_prio_prep(struct thread_data *td, struct io_u *io_u)
 	struct ioring_options *o = td->eo;
 	struct ioring_data *ld = td->io_ops_data;
 	if (rand_between(&td->prio_state, 0, 99) < o->cmdprio_percentage) {
-		ld->sqes[io_u->index].ioprio = IOPRIO_CLASS_RT << IOPRIO_CLASS_SHIFT;
+		ld->sqes[io_u->index% td->o.iodepth].ioprio = IOPRIO_CLASS_RT << IOPRIO_CLASS_SHIFT;
 		io_u->flags |= IO_U_F_PRIORITY;
 	}
 	return;
@@ -398,8 +416,10 @@ static enum fio_q_status fio_ioring_queue(struct thread_data *td,
 
 	if (o->cmdprio_percentage)
 		fio_ioring_prio_prep(td, io_u);
-	ring->array[tail & ld->sq_ring_mask] = io_u->index;
-	*ring->tail = next_tail;
+	ring->array[tail & ld->sq_ring_mask] = io_u->index % td->o.iodepth;
+
+
+    *ring->tail = next_tail;
 	write_barrier();
 
 	ld->queued++;
@@ -410,8 +430,8 @@ static void fio_ioring_queued(struct thread_data *td, int start, int nr)
 {
 	struct ioring_data *ld = td->io_ops_data;
 	struct timespec now;
-
-	if (!fio_fill_issue_time(td))
+    struct io_u *io_u;
+    if (!fio_fill_issue_time(td))
 		return;
 
 	fio_gettime(&now, NULL);
@@ -419,10 +439,11 @@ static void fio_ioring_queued(struct thread_data *td, int start, int nr)
 	while (nr--) {
 		struct io_sq_ring *ring = &ld->sq_ring;
 		int index = ring->array[start & ld->sq_ring_mask];
-		struct io_u *io_u = ld->io_u_index[index];
+		io_u = (struct io_u*)ld->sqes[index].user_data;
+
 
 		memcpy(&io_u->issue_time, &now, sizeof(now));
-		io_u_queued(td, io_u);
+		io_u_queued(td, io_u); // submit latency
 
 		start++;
 	}
@@ -473,7 +494,7 @@ static int fio_ioring_commit(struct thread_data *td)
 				if (ret)
 					continue;
 				/* Shouldn't happen */
-				usleep(1);
+				usleep(1);// todo inline submission mode slepted??
 				continue;
 			}
 			td_verror(td, errno, "io_uring_enter submit");
@@ -526,8 +547,10 @@ static int fio_ioring_mmap(struct ioring_data *ld, struct io_uring_params *p)
 	sring->flags = ptr + p->sq_off.flags;
 	sring->array = ptr + p->sq_off.array;
 	ld->sq_ring_mask = *sring->ring_mask;
+    ld->sq_entries = p->sq_entries;
+    ld->cq_entries = p->cq_entries;
 
-	ld->mmap[1].len = p->sq_entries * sizeof(struct io_uring_sqe);
+    ld->mmap[1].len = p->sq_entries * sizeof(struct io_uring_sqe);
 	ld->sqes = mmap(0, ld->mmap[1].len, PROT_READ | PROT_WRITE,
 				MAP_SHARED | MAP_POPULATE, ld->ring_fd,
 				IORING_OFF_SQES);
@@ -568,7 +591,7 @@ static int fio_ioring_queue_init(struct thread_data *td)
 		}
 		if (o->sqpoll_idle_set) {
 			p.sq_thread_idle = o->sqpoll_idle;
-		}		
+		}
 	}
 
 	ret = syscall(__NR_io_uring_setup, depth, &p);
@@ -598,20 +621,31 @@ static int fio_ioring_queue_init(struct thread_data *td)
 static int fio_ioring_register_files(struct thread_data *td)
 {
 	struct ioring_data *ld = td->io_ops_data;
-	struct fio_file *f;
+    struct ioring_data *parent_ld ;
+
+    struct fio_file *f;
 	unsigned int i;
 	int ret;
 
 	ld->fds = calloc(td->o.nr_files, sizeof(int));
+    if(td->parent){
+        parent_ld = td->parent->io_ops_data;
+        for_each_file(td, f, i) {
+                ld->fds[i] = parent_ld->fds[i];
+                f->engine_pos = i;
+        }
 
-	for_each_file(td, f, i) {
-		ret = generic_open_file(td, f);
-		if (ret)
-			goto err;
-		ld->fds[i] = f->fd;
-		f->engine_pos = i;
-	}
+    }else {
 
+
+        for_each_file(td, f, i) {
+                ret = generic_open_file(td, f);
+                if (ret)
+                    goto err;
+                ld->fds[i] = f->fd;
+                f->engine_pos = i;
+            }
+    }
 	ret = syscall(__NR_io_uring_register, ld->ring_fd,
 			IORING_REGISTER_FILES, ld->fds, td->o.nr_files);
 	if (ret) {
@@ -641,21 +675,40 @@ static int fio_ioring_post_init(struct thread_data *td)
 	struct ioring_options *o = td->eo;
 	struct io_u *io_u;
 	int err, i;
+    dprint(FD_IO, "fio_ioring_post_init loop iovec +\n");
+    dprint(FD_IO, "segfault11 td->o.iodepth: %d\n",td->o.iodepth);
 
 	for (i = 0; i < td->o.iodepth; i++) {
-		struct iovec *iov = &ld->iovecs[i];
 
-		io_u = ld->io_u_index[i];
-		iov->iov_base = io_u->buf;
-		iov->iov_len = td_max_bs(td);
-	}
+        dprint(FD_IO, "segfault1 ring_fd: %d  &ld->iovecs[%d] mem_i %p\n", &ld->ring_fd,i ,&ld->iovecs[i]);
 
-	err = fio_ioring_queue_init(td);
-	if (err) {
+        struct iovec *iov = &ld->iovecs[i];
+        dprint(FD_IO, "segfault1 ring_fd: %d ld->io_u_index[%d] men_i %p\n", &ld->ring_fd,i, ld->io_u_index[i]);
+
+		io_u = ld->io_u_index[i];// remove no need to use io_u_)ind
+        dprint(FD_IO, "segfault1 ring_fd: %d io_u->buf %i mem %p \n", &ld->ring_fd,i, io_u->buf );
+
+        iov->iov_base = io_u->buf;
+
+        iov->iov_len = td_max_bs(td);
+
+    }
+    dprint(FD_IO, "fio_ioring_post_init loop iovec -\n");
+
+    dprint(FD_IO, "fio_ioring_queue_init +\n");
+
+	err = fio_ioring_queue_init(td); // call io_uring_setup
+    dprint(FD_IO, "fio_ioring_queue_init -\n");
+
+    if (err) {
 		td_verror(td, errno, "io_queue_init");
 		return 1;
 	}
 
+    if (td->o.iodepth!=ld->sq_entries){
+        td_verror(td, EBADSLT, "io_queue_init");
+        return 1;
+    }
 	if (o->registerfiles) {
 		err = fio_ioring_register_files(td);
 		if (err) {
@@ -723,7 +776,7 @@ static int fio_ioring_io_u_init(struct thread_data *td, struct io_u *io_u)
 {
 	struct ioring_data *ld = td->io_ops_data;
 
-	ld->io_u_index[io_u->index] = io_u;
+	ld->io_u_index[io_u->index % td->o.iodepth] = io_u ;
 	return 0;
 }
 
@@ -755,14 +808,14 @@ static struct ioengine_ops ioengine = {
 	.name			= "io_uring",
 	.version		= FIO_IOOPS_VERSION,
 	.flags			= FIO_ASYNCIO_SYNC_TRIM,
-	.init			= fio_ioring_init,
-	.post_init		= fio_ioring_post_init,
-	.io_u_init		= fio_ioring_io_u_init,
-	.prep			= fio_ioring_prep,
-	.queue			= fio_ioring_queue,
-	.commit			= fio_ioring_commit,
-	.getevents		= fio_ioring_getevents,
-	.event			= fio_ioring_event,
+	.init			= fio_ioring_init, // init ioring_data
+	.post_init		= fio_ioring_post_init, // io_uring_setup
+	.io_u_init		= fio_ioring_io_u_init, //  ioring_data points to each new io_u
+	.prep			= fio_ioring_prep, // io_uring_sqe by io_u
+	.queue			= fio_ioring_queue, // sq_ring->tail ++
+	.commit			= fio_ioring_commit, // io_uring_enter if need wakeup or IORING_ENTER_GETEVENTS
+	.getevents		= fio_ioring_getevents, // reap cq_ring->head++
+	.event			= fio_ioring_event, // given event/index get io_u from cqe->user_data and check res
 	.cleanup		= fio_ioring_cleanup,
 	.open_file		= fio_ioring_open_file,
 	.close_file		= fio_ioring_close_file,

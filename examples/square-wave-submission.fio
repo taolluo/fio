@@ -1,9 +1,9 @@
 [square_wave]
-size=400m
+size=100m
 numjobs=1
-runtime=5
+runtime=6  s######
 
-iodepth=256
+iodepth=9
 time_based=1
 ramp_time=3
 clocksource=cpu
@@ -12,7 +12,7 @@ rw=randread
 
 thread=1 # Needed for spdk, so use for all for congruence.
 
-bs=4096
+blocksize=4k
 
 group_reporting=1
 
@@ -21,24 +21,34 @@ group_reporting=1
 rate_process=linear
 
 # alternate between rate_iops and rate_iops_min
-rate_iops=100000
-rate_iops_min=10000
+rate_iops=10000
+rate_iops_min=1000
 
 # a period begins with pulse phase
-square_wave_period=2000 # in usec
-square_wave_pulse_width=1000 # in usec
+# square_wave_period=20000 # in usec
+# square_wave_pulse_width=10000 # in usec
 
 ## io-uring experiment
 
 ioengine=io_uring
-hipri=1  # IOPOLL
+hipri=1 # IOPOLL
 sqthread_poll=1 # SQPOLL
-fixedbufs=1
+## works for sq_thread iopoll
+fixedbufs=1 ######### 1 Bad address for polling+offload fixme
+nonvectored=0 ### must be 0, otherwise invalid argument error, effective if fixedbufs==0
+
 registerfiles=1
 direct=1
-filename=/dev/nvme1n1
+filename=/dev/nvme1n1:/dev/nvme0n1
+#io_submit_mode=offload
 
 
-## libaio experiment
-; directory=/mnt/ramdisk
-; ioengine=libaio
+# inline mode 3 aio ioring
+# offload mode 13 iod=10
+# serialize_overlap=1
+sqthread_poll_idle = 1 ##########
+##fwe libaio experiment
+#directory=/mnt/ramdisk
+#ioengine=libaio
+
+
