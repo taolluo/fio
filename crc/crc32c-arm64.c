@@ -1,6 +1,5 @@
 #include "crc32c.h"
 #include "../os/os.h"
-
 bool crc32c_arm64_available = false;
 
 #ifdef ARCH_HAVE_CRC_CRYPTO
