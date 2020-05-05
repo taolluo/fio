@@ -856,17 +856,17 @@ static long long usec_for_io(struct thread_data *td, enum fio_ddir ddir, uint64_
         if (td->o.rate_iops_min[ddir]) {
             iops_min = td->o.rate_iops_min[ddir];
             bps_min = iops_min * td->o.bs[ddir];
-            dprint(FD_RATE, "SW: rate_iops_min, poisson iops = %d ,  bps = %d \n", iops_min, bps_min);
+            dprint(FD_RATE, "SW: rate_iops_min, iops_min = %d ,  bps_min = %d \n", iops_min, bps_min);
 
         } else if (td->o.ratemin[ddir]) {
             bps_min = td->o.ratemin[ddir];
             iops_min = bps_min / td->o.bs[ddir];
-            dprint(FD_RATE, "SW: ratemin, poisson iops = %d ,  bps = %d \n", iops_min, bps_min);
+            dprint(FD_RATE, "SW: ratemin, iops_min = %d ,  bps_min = %d \n", iops_min, bps_min);
 
         } else {
-            iops_min = iops_max / 20; // by default 5% of max iops, at negative half of square wave
-            bps_min = iops_min * td->o.bs[ddir];
-            dprint(FD_RATE, "SW: default, poisson iops = %d ,  bps = %d \n", iops, bps);
+            iops_min = 0; // by default 0 iops at negative half of square wave
+            bps_min = 0;
+            dprint(FD_RATE, "SW: default, iops_min = %d ,  bps_min = %d \n", iops_min, bps_min);
 
         }
     }
