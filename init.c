@@ -51,7 +51,10 @@ static bool parse_only;
 static bool merge_blktrace_only;
 
 static struct thread_data def_thread;
+
+
 struct thread_data *threads = NULL;
+
 static char **job_sections;
 static int nr_job_sections;
 
@@ -541,6 +544,7 @@ static void put_job(struct thread_data *td)
 static int __setup_rate(struct thread_data *td, enum fio_ddir ddir)
 {
 	unsigned long long bs = td->o.min_bs[ddir];
+    uint64_t bps= 0, iops= 0, bps_max= 0, iops_max= 0, bps_min= 0, iops_min= 0, period_byte= 0, incomplete_period_byte= 0, byte_per_pulse= 0,byte_per_negative_half= 0, period_nr= 0, incomplete_period= 0;
 
 	assert(ddir_rw(ddir));
 
@@ -561,13 +565,58 @@ static int __setup_rate(struct thread_data *td, enum fio_ddir ddir)
 
 	td->rate_next_io_time[ddir] = 0;
 	td->rate_io_issue_bytes[ddir] = 0;
-	td->last_usec[ddir] = 0;
+    td->rate_io_period_issue_bytes[ddir] = 0;
+    td->last_usec[ddir] = 0;
+    if (td->o.square_wave_set){
+        bps_max = td->rate_bps[ddir];
+
+        if (td->o.rate_iops_min[ddir]) {
+            assert(!td->o.ratemin[ddir]);
+            iops_min = td->o.rate_iops_min[ddir];
+            bps_min = iops_min * td->o.bs[ddir];
+//            dprint(FD_RATE, "SW: rate_iops_min, iops_min = %d ,  bps_min = %d \n", iops_min, bps_min);
+
+        } else if (td->o.ratemin[ddir]) {
+            assert(!td->o.rate_iops_min[ddir]);
+            bps_min = td->o.ratemin[ddir];
+            iops_min = bps_min / td->o.bs[ddir];
+//            dprint(FD_RATE, "SW: ratemin, iops_min = %d ,  bps_min = %d \n", iops_min, bps_min);
+
+        } else {
+            iops_min = 0; // by default 0 iops at negative half of square wave
+            bps_min = 0;
+        }
+
+        period_nr = td->real_phase / td->o.square_wave_period;
+        incomplete_period = td->real_phase % td->o.square_wave_period;
+        byte_per_pulse = td->o.square_wave_pulse_width * bps_max / 1000000;
+
+
+        if (period_nr != 0) {
+            byte_per_negative_half =
+                    (td->o.square_wave_period - td->o.square_wave_pulse_width) * bps_min / 1000000;
+            period_byte =  period_nr * ( byte_per_negative_half + byte_per_pulse);
+        }
+
+        if (incomplete_period<=td->o.square_wave_pulse_width){
+            incomplete_period_byte = incomplete_period * bps_max / 1000000;
+        } else{
+            incomplete_period_byte = byte_per_pulse + (incomplete_period - td->o.square_wave_pulse_width) * bps_min / 1000000;
+        }
+
+        td->rate_io_phase_bytes_offset[ddir] = incomplete_period_byte + period_byte;
+
+    }
+
 	return 0;
 }
 
 static int setup_rate(struct thread_data *td)
 {
 	int ret = 0;
+    if (td->o.square_wave_set){
+        td->real_phase = td->o.phase + (td->o.phase_drift_per_job * (td->thread_number - 1) );
+    }
 
 	if (td->o.rate[DDIR_READ] || td->o.rate_iops[DDIR_READ])
 		ret = __setup_rate(td, DDIR_READ);

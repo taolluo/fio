@@ -185,7 +185,12 @@ struct thread_options {
 	unsigned long long ramp_time;
 	unsigned long long square_wave_period;
 	unsigned long long square_wave_pulse_width;
-	unsigned int ss_state;
+    unsigned long long phase;
+    unsigned long long phase_drift_per_job;
+    unsigned int square_wave_set;
+    unsigned int synced_job_start;
+
+    unsigned int ss_state;
 	fio_fp64_t ss_limit;
 	unsigned long long ss_dur;
 	unsigned long long ss_ramp_time;

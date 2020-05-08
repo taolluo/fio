@@ -68,6 +68,8 @@ int shm_id = 0;
 int temp_stall_ts;
 unsigned long done_secs = 0;
 pthread_mutex_t overlap_check = PTHREAD_MUTEX_INITIALIZER;
+pthread_spinlock_t jobs_epoch_lock;
+pthread_barrier_t jobs_start_barrier;
 
 #define JOB_START_TIMEOUT	(5 * 1000)
 
@@ -829,18 +831,18 @@ static bool io_complete_bytes_exceeded(struct thread_data *td)
  */
 static long long usec_for_io(struct thread_data *td, enum fio_ddir ddir, uint64_t io_u_start)
 {
-	uint64_t bps, iops, bps_max, iops_max, bps_min, iops_min;
-    uint64_t current_io_time;
+	uint64_t bps=0, iops=0, bps_max=0, iops_max=0, bps_min=0, iops_min=0, ret=0;
+    uint64_t current_io_time=0;
 	assert(!(td->flags & TD_F_CHILD));
-    uint64_t is_square_wave=0, is_pulse=0;
+    uint64_t is_pulse=0;
 
     bps = bps_max = td->rate_bps[ddir];
     iops = iops_max = bps / td->o.bs[ddir];
 
 
 
-    if (td->o.square_wave_period && td->o.square_wave_pulse_width) {
-        is_square_wave = 1;
+    if (td->o.square_wave_set) {
+//        is_square_wave = 1;
         dprint(FD_RATE, "SW:  square_wave_period = %d, square_wave_pulse_width=%d \n", (int) td->o.square_wave_period, (int) td->o.square_wave_pulse_width);
         dprint(FD_RATE, "SW:  pulse bps = %d, iops=%d \n", (int) bps,iops);
 
@@ -852,7 +854,7 @@ static long long usec_for_io(struct thread_data *td, enum fio_ddir ddir, uint64_
         }
     }
 
-    if (is_square_wave){
+    if (td->o.square_wave_set){
         if (td->o.rate_iops_min[ddir]) {
             iops_min = td->o.rate_iops_min[ddir];
             bps_min = iops_min * td->o.bs[ddir];
@@ -873,7 +875,7 @@ static long long usec_for_io(struct thread_data *td, enum fio_ddir ddir, uint64_
 
 	if (td->o.rate_process == RATE_PROCESS_POISSON) {
         uint64_t val;
-        if (is_square_wave && !is_pulse)
+        if (td->o.square_wave_set && !is_pulse)
             iops = iops_min;
 		val = (int64_t) (0.5 + (1000000 / iops) *
 				-logf(__rand_0_1(&td->poisson_state[ddir])));
@@ -889,11 +891,11 @@ static long long usec_for_io(struct thread_data *td, enum fio_ddir ddir, uint64_
 		return td->last_usec[ddir];
 	} else if (td->o.rate_process == RATE_PROCESS_LINEAR) {
 
-        dprint(FD_RATE, "SW: linear, square wave 0 bps: %d is_square_wave: %d\n",bps, is_square_wave);
-        uint64_t bytes = td->rate_io_issue_bytes[ddir];
+        dprint(FD_RATE, "SW: linear, square wave 0 bps: %d is_square_wave: %d\n",bps, td->o.square_wave_set);
+        uint64_t bytes = td->rate_io_issue_bytes[ddir] + td->rate_io_phase_bytes_offset[ddir] ;
 
 
-        if (!is_square_wave && bps) {
+        if (!td->o.square_wave_set && bps) {
 
             dprint(FD_RATE, "SW: linear, constant rate \n");
             uint64_t secs = bytes / bps;
@@ -915,16 +917,20 @@ static long long usec_for_io(struct thread_data *td, enum fio_ddir ddir, uint64_
 
                 uint64_t secs_in_pulse = byte_remainder / bps_max;
                 uint64_t remainder = byte_remainder % bps_max;
-                return td->o.square_wave_period * periods + remainder * 1000000 / bps_max + secs_in_pulse * 1000000;
+                ret = td->o.square_wave_period * periods + remainder * 1000000 / bps_max + secs_in_pulse * 1000000 - td->real_phase;
+                return ret;
             }else{
                 dprint(FD_RATE, "SW: linear square wave, in negative half \n");
                 uint64_t secs_after_pulse = (byte_remainder - byte_per_pulse) / bps_min;
                 uint64_t remainder = (byte_remainder - byte_per_pulse) % bps_min;
-                return td->o.square_wave_period * periods + td->o.square_wave_pulse_width + remainder * 1000000 / bps_min + secs_after_pulse * 1000000;
+                ret = td->o.square_wave_period * periods + td->o.square_wave_pulse_width + remainder * 1000000 / bps_min + secs_after_pulse * 1000000 - td->real_phase;
+                return ret;
             }
 	    }
 
-	}
+    } else if (td->o.rate_process == RATE_PROCESS_LINEAR) {
+	    exit -1;
+    }
 
 	return 0;
 }
@@ -964,8 +970,8 @@ static void handle_thinktime(struct thread_data *td, enum fio_ddir ddir)
 			over = bs;
 		else
 			over = (usperop - total) / usperop * -bs;
-
 		td->rate_io_issue_bytes[ddir] += (missed - over);
+        td->rate_io_period_issue_bytes[ddir] += (missed - over);
 		/* adjust for rate_process=poisson */
 		td->last_usec[ddir] += total;
 	}
@@ -1140,7 +1146,9 @@ static void do_io(struct thread_data *td, uint64_t *bytes_done)
 				td->io_issues[__ddir]++;
 				td->io_issue_bytes[__ddir] += blen;
 				td->rate_io_issue_bytes[__ddir] += blen;
-			}
+                td->rate_io_period_issue_bytes[__ddir] += blen;
+
+            }
 
 			if (should_check_rate(td)){
                 uint64_t usec_since_epoch;
@@ -1616,7 +1624,10 @@ struct fork_data {
  */
 static void *thread_main(void *data)
 {
-	struct fork_data *fd = data;
+    struct thread_data *td_i;
+    int i;
+
+    struct fork_data *fd = data;
 	unsigned long long elapsed_us[DDIR_RWDIR_CNT] = { 0, };
 	struct thread_data *td = fd->td;
 	struct thread_options *o = &td->o;
@@ -1834,8 +1845,27 @@ static void *thread_main(void *data)
 		goto err;
 
     dprint(FD_IO, "rate_submit_init -\n");
+    if(!td->o.synced_job_start) {
+        set_epoch_time(td, o->log_unix_epoch);
 
-	set_epoch_time(td, o->log_unix_epoch);
+
+    }else{
+// lock
+    pthread_spin_lock(&jobs_epoch_lock);
+    set_epoch_time(td, o->log_unix_epoch);
+    for_each_td(td_i,i){
+        td_i->epoch = td->epoch;
+        if (o->log_unix_epoch) {
+            td_i->unix_epoch = td->unix_epoch;
+        }
+    }
+    pthread_spin_unlock(&jobs_epoch_lock);
+// unlock
+
+        pthread_barrier_wait(&jobs_start_barrier);
+    }
+
+    dprint(FD_PROCESS, "SW: thread %d, epoch is  tv_sec %d, tv_nsec %d\n", td->thread_number , td->epoch.tv_sec,td->epoch.tv_nsec);
 	fio_getrusage(&td->ru_start);
 	memcpy(&td->bw_sample_time, &td->epoch, sizeof(td->epoch));
 	memcpy(&td->iops_sample_time, &td->epoch, sizeof(td->epoch));
@@ -2330,7 +2360,9 @@ static void run_threads(struct sk_out *sk_out)
 		buf_output_free(&out);
 	}
 
-	todo = thread_number;
+    pthread_barrier_init(&jobs_start_barrier,PTHREAD_PROCESS_PRIVATE, thread_number);
+    pthread_spin_init(&jobs_epoch_lock, PTHREAD_PROCESS_PRIVATE);
+    todo = thread_number;
 	nr_running = 0;
 	nr_started = 0;
 	m_rate = t_rate = 0;

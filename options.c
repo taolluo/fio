@@ -1380,6 +1380,16 @@ static int str_dedupe_cb(void *data, unsigned long long *il)
 	return 0;
 }
 
+static int set_square_wave_cb(void *data, unsigned long long *square_wave_period)
+{
+    struct thread_data *td = cb_data_to_td(data);
+    if(*square_wave_period > 0){
+        td->o.square_wave_set = 1;
+        td->o.square_wave_period = *square_wave_period;
+    }
+    return 0;
+}
+
 static int str_verify_pattern_cb(void *data, const char *input)
 {
 	struct thread_data *td = cb_data_to_td(data);
@@ -2693,6 +2703,7 @@ struct fio_option fio_options[FIO_MAX_OPTS] = {
             .name	= "square_wave_period",
             .lname	= "Time interval of square wave period",
             .type	= FIO_OPT_STR_VAL_TIME,
+            .cb = set_square_wave_cb,
             .off1	= offsetof(struct thread_options, square_wave_period),
             .help	= "Time interval of square wave period",
             .is_seconds = 0,
@@ -2711,6 +2722,39 @@ struct fio_option fio_options[FIO_MAX_OPTS] = {
             .category = FIO_OPT_C_GENERAL,
             .group	= FIO_OPT_G_RUNTIME,
     },
+    {
+            .name	= "phase",
+            .lname	= "Phase of square wave function",
+            .type	= FIO_OPT_STR_VAL_TIME,
+            .off1	= offsetof(struct thread_options, phase),
+            .help	= "Phase of square wave period",
+            .is_seconds = 0,
+            .is_time = 1,
+            .category = FIO_OPT_C_GENERAL,
+            .group	= FIO_OPT_G_RUNTIME,
+    },
+    {
+            .name	= "phase_drift_per_job",
+            .lname	= "additional phase for each job",
+            .type	= FIO_OPT_STR_VAL_TIME,
+            .off1	= offsetof(struct thread_options, phase_drift_per_job),
+            .help	= "Time interval of square wave period",
+            .is_seconds = 0,
+            .is_time = 1,
+//            .cb = set_square_wave_cb,
+            .category = FIO_OPT_C_GENERAL,
+            .group	= FIO_OPT_G_RUNTIME,
+    },
+    {
+            .name	= "synced_job_start",
+            .lname	= "each job blocks at start then unblock simutaneously ",
+            .type	= FIO_OPT_STR_SET,
+            .off1	= offsetof(struct thread_options, synced_job_start),
+            .help	= "each job blocks at start then unblock simutaneously ",
+            .category = FIO_OPT_C_GENERAL,
+            .group	= FIO_OPT_G_RUNTIME,
+    },
+
 	{
 		.name	= "clocksource",
 		.lname	= "Clock source",
@@ -3624,6 +3668,11 @@ struct fio_option fio_options[FIO_MAX_OPTS] = {
 			    .oval = RATE_PROCESS_POISSON,
 			    .help = "Rate follows Poisson process",
 			  },
+              {
+                  .ival = "bursting_poisson",
+                  .oval = RATE_PROCESS_BURSTING_POISSON,
+                  .help = "Workload pulse follows Poisson process",
+              },
 		},
 		.parent = "rate",
 	},

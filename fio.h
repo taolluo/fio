@@ -149,6 +149,7 @@ enum {
 
 	RATE_PROCESS_LINEAR = 0,
 	RATE_PROCESS_POISSON = 1,
+    RATE_PROCESS_BURSTING_POISSON = 2,
 };
 
 enum {
@@ -324,9 +325,13 @@ struct thread_data {
 	unsigned long rate_bytes[DDIR_RWDIR_CNT];
 	unsigned long rate_blocks[DDIR_RWDIR_CNT];
 	unsigned long long rate_io_issue_bytes[DDIR_RWDIR_CNT];
-	struct timespec lastrate[DDIR_RWDIR_CNT];
+    unsigned long long rate_io_period_issue_bytes[DDIR_RWDIR_CNT];
+    unsigned long long rate_io_phase_bytes_offset[DDIR_RWDIR_CNT];
+
+    struct timespec lastrate[DDIR_RWDIR_CNT];
 	int64_t last_usec[DDIR_RWDIR_CNT];
 	struct frand_state poisson_state[DDIR_RWDIR_CNT];
+    unsigned long long real_phase;
 
 	/*
 	 * Enforced rate submission/completion workqueue
@@ -542,6 +547,8 @@ extern long long trigger_timeout;
 extern char *aux_path;
 
 extern struct thread_data *threads;
+extern pthread_spinlock_t jobs_epoch_lock;
+extern pthread_barrier_t jobs_start_barrier;
 
 static inline bool is_running_backend(void)
 {

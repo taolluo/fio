@@ -1,7 +1,7 @@
-[square_wave]
+[global]
 size=100m
-numjobs=1
-runtime=6  s######
+numjobs=3
+runtime=4
 filename=/dev/nvme0n1:/dev/nvme1n1:/dev/nvme2n1:/dev/nvme3n1
 file_service_type=random:32
 direct=1
@@ -20,10 +20,13 @@ write_lat_log=sw
 rate_process=linear
 
 # alternate between rate_iops and rate_iops_min
-rate_iops=10000
+rate_iops=12300
 rate_iops_min=0
 
 # a period begins with pulse phase
+# square_wave_period=2000000 # in usec
+# square_wave_pulse_width=1000000 # in usec
+
 square_wave_period=20000 # in usec
 square_wave_pulse_width=10000 # in usec
 
@@ -51,4 +54,6 @@ registerfiles=1
 ## libaio experiment
 # ioengine=libaio
 
+stonewall
 
+[square_wave]
