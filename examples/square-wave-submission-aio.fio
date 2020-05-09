@@ -1,7 +1,7 @@
 [square_wave]
 size=100m
 numjobs=3
-runtime=4
+runtime=10
 filename=/dev/nvme0n1:/dev/nvme1n1:/dev/nvme2n1:/dev/nvme3n1
 file_service_type=random:32
 direct=1
@@ -60,6 +60,8 @@ square_wave_pulse_width=1000000 # in usec
 # square_wave_period=20000 # in usec
 # square_wave_pulse_width=10000 # in usec
 
-phase=1000000
+# phase=1000000
+# phase=500000
+
 # phase_drift_per_job=1000000
-phase_drift_per_job=500000
+# phase_drift_per_job=500000
