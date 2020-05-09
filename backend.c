@@ -885,6 +885,7 @@ static long long usec_for_io(struct thread_data *td, enum fio_ddir ddir, uint64_
 	    assert(td->o.square_wave_set);
         recent_io_time = td->rate_next_io_time[ddir]; // current  io_time utime_since_now(&td->epoch);
         if (recent_io_time >= td->rate_next_period_arrival_time){
+            assert(rand_max(&td->bursting_poisson_state)>=(2*(td->o.square_wave_period - td->o.square_wave_pulse_width)));
             td->rate_this_period = td->o.square_wave_pulse_width + __rand(&td->bursting_poisson_state) % (2*(td->o.square_wave_period - td->o.square_wave_pulse_width));
             td->rate_next_period_arrival_time += td->rate_this_period;
             td->rate_io_period_issue_bytes[ddir] = 0;
