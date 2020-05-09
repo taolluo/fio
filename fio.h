@@ -139,6 +139,7 @@ enum {
 	FIO_RAND_ZONE_OFF,
 	FIO_RAND_POISSON2_OFF,
 	FIO_RAND_POISSON3_OFF,
+    FIO_RAND_BURSTING_POISSON_OFF,
 	FIO_RAND_PRIO_CMDS,
 	FIO_RAND_NR_OFFS,
 };
@@ -322,7 +323,10 @@ struct thread_data {
 	 */
 	uint64_t rate_bps[DDIR_RWDIR_CNT];
 	uint64_t rate_next_io_time[DDIR_RWDIR_CNT];
-	unsigned long rate_bytes[DDIR_RWDIR_CNT];
+    uint64_t rate_next_period_arrival_time;
+    uint64_t rate_this_period;
+
+    unsigned long rate_bytes[DDIR_RWDIR_CNT];
 	unsigned long rate_blocks[DDIR_RWDIR_CNT];
 	unsigned long long rate_io_issue_bytes[DDIR_RWDIR_CNT];
     unsigned long long rate_io_period_issue_bytes[DDIR_RWDIR_CNT];
@@ -331,7 +335,9 @@ struct thread_data {
     struct timespec lastrate[DDIR_RWDIR_CNT];
 	int64_t last_usec[DDIR_RWDIR_CNT];
 	struct frand_state poisson_state[DDIR_RWDIR_CNT];
-    unsigned long long real_phase;
+    struct frand_state bursting_poisson_state;
+
+    uint64_t real_phase;
 
 	/*
 	 * Enforced rate submission/completion workqueue

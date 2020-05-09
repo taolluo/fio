@@ -832,27 +832,13 @@ static bool io_complete_bytes_exceeded(struct thread_data *td)
 static long long usec_for_io(struct thread_data *td, enum fio_ddir ddir, uint64_t io_u_start)
 {
 	uint64_t bps=0, iops=0, bps_max=0, iops_max=0, bps_min=0, iops_min=0, ret=0;
-    uint64_t current_io_time=0;
+    uint64_t recent_io_time=0;
 	assert(!(td->flags & TD_F_CHILD));
     uint64_t is_pulse=0;
 
     bps = bps_max = td->rate_bps[ddir];
     iops = iops_max = bps / td->o.bs[ddir];
 
-
-
-    if (td->o.square_wave_set) {
-//        is_square_wave = 1;
-        dprint(FD_RATE, "SW:  square_wave_period = %d, square_wave_pulse_width=%d \n", (int) td->o.square_wave_period, (int) td->o.square_wave_pulse_width);
-        dprint(FD_RATE, "SW:  pulse bps = %d, iops=%d \n", (int) bps,iops);
-
-        current_io_time = td->rate_next_io_time[ddir]; // current  io_time utime_since_now(&td->epoch);
-        dprint(FD_RATE, "SW: poisson current_io_time = %d ,  mod prd = %d \n", current_io_time,(int) (current_io_time% td->o.square_wave_period));
-
-        if (! (current_io_time % td->o.square_wave_period) > td->o.square_wave_pulse_width) {
-            is_pulse = 1;
-        }
-    }
 
     if (td->o.square_wave_set){
         if (td->o.rate_iops_min[ddir]) {
@@ -875,6 +861,12 @@ static long long usec_for_io(struct thread_data *td, enum fio_ddir ddir, uint64_
 
 	if (td->o.rate_process == RATE_PROCESS_POISSON) {
         uint64_t val;
+        recent_io_time = td->rate_next_io_time[ddir]; // current  io_time utime_since_now(&td->epoch);
+        dprint(FD_RATE, "SW: poisson recent_io_time = %d ,  mod prd = %d \n", recent_io_time, (int) (recent_io_time % td->o.square_wave_period));
+
+        if (! (recent_io_time % td->o.square_wave_period) > td->o.square_wave_pulse_width) {
+            is_pulse = 1;
+        }
         if (td->o.square_wave_set && !is_pulse)
             iops = iops_min;
 		val = (int64_t) (0.5 + (1000000 / iops) *
@@ -889,7 +881,29 @@ static long long usec_for_io(struct thread_data *td, enum fio_ddir ddir, uint64_
 
 		td->last_usec[ddir] += val;
 		return td->last_usec[ddir];
-	} else if (td->o.rate_process == RATE_PROCESS_LINEAR) {
+	} else if (td->o.rate_process == RATE_PROCESS_BURSTING_POISSON) {
+	    assert(td->o.square_wave_set);
+        recent_io_time = td->rate_next_io_time[ddir]; // current  io_time utime_since_now(&td->epoch);
+        if (recent_io_time >= td->rate_next_period_arrival_time){
+            td->rate_this_period = td->o.square_wave_pulse_width + __rand(&td->bursting_poisson_state) % (2*(td->o.square_wave_period - td->o.square_wave_pulse_width));
+            td->rate_next_period_arrival_time += td->rate_this_period;
+            td->rate_io_period_issue_bytes[ddir] = 0;
+        }
+
+        uint64_t bytes = td->rate_io_period_issue_bytes[ddir];
+        uint64_t low_half_bytes = bps_min * (td->rate_this_period - td->o.square_wave_pulse_width);
+
+        if (bytes >= low_half_bytes){ // in pulse
+            uint64_t secs_in_pulse = (bytes - low_half_bytes) / bps_max;
+            ret = td->rate_next_period_arrival_time -  (td->o.square_wave_pulse_width - 1000000 * secs_in_pulse );
+            return ret;
+        } else{ // in low half
+            uint64_t secs_in_low_half = bytes / bps_min;
+            ret = td->rate_next_period_arrival_time - (td->rate_this_period - 1000000 * secs_in_low_half);
+            return ret;
+        }
+
+    }else if (td->o.rate_process == RATE_PROCESS_LINEAR) {
 
         dprint(FD_RATE, "SW: linear, square wave 0 bps: %d is_square_wave: %d\n",bps, td->o.square_wave_set);
         uint64_t bytes = td->rate_io_issue_bytes[ddir] + td->rate_io_phase_bytes_offset[ddir] ;
@@ -928,8 +942,6 @@ static long long usec_for_io(struct thread_data *td, enum fio_ddir ddir, uint64_
             }
 	    }
 
-    } else if (td->o.rate_process == RATE_PROCESS_LINEAR) {
-	    exit -1;
     }
 
 	return 0;

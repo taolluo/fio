@@ -616,6 +616,9 @@ static int setup_rate(struct thread_data *td)
 	int ret = 0;
     if (td->o.square_wave_set){
         td->real_phase = td->o.phase + (td->o.phase_drift_per_job * (td->thread_number - 1) );
+        td->rate_this_period = td->o.square_wave_pulse_width + __rand(&td->bursting_poisson_state) % (2*(td->o.square_wave_period - td->o.square_wave_pulse_width));
+        td->rate_next_period_arrival_time = td->rate_this_period;
+
     }
 
 	if (td->o.rate[DDIR_READ] || td->o.rate_iops[DDIR_READ])
@@ -1082,6 +1085,7 @@ static void td_fill_rand_seeds_internal(struct thread_data *td, bool use64)
 	init_rand_seed(&td->poisson_state[0], td->rand_seeds[FIO_RAND_POISSON_OFF], 0);
 	init_rand_seed(&td->poisson_state[1], td->rand_seeds[FIO_RAND_POISSON2_OFF], 0);
 	init_rand_seed(&td->poisson_state[2], td->rand_seeds[FIO_RAND_POISSON3_OFF], 0);
+    init_rand_seed(&td->bursting_poisson_state, td->rand_seeds[FIO_RAND_BURSTING_POISSON_OFF], 0);
 	init_rand_seed(&td->dedupe_state, td->rand_seeds[FIO_DEDUPE_OFF], false);
 	init_rand_seed(&td->zone_state, td->rand_seeds[FIO_RAND_ZONE_OFF], false);
 	init_rand_seed(&td->prio_state, td->rand_seeds[FIO_RAND_PRIO_CMDS], false);
