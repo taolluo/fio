@@ -894,7 +894,7 @@ static long long usec_for_io(struct thread_data *td, enum fio_ddir ddir, uint64_
         uint64_t bytes = td->rate_io_period_issue_bytes[ddir];
         uint64_t low_half_bytes = bps_min * (td->rate_this_period - td->o.square_wave_pulse_width) / 1000000;
 
-        if (bytes >= low_half_bytes){ // in pulse fixme min=0
+        if (bytes >= low_half_bytes){ // in pulse
             dprint(FD_RATE, "SW: linear > , square wave rate_io_period_issue_bytes %d > low_half_bytes %d\n",bytes,low_half_bytes);
 
             uint64_t usecs_in_pulse = (1000000 *(bytes - low_half_bytes)) / bps_max;
@@ -902,7 +902,7 @@ static long long usec_for_io(struct thread_data *td, enum fio_ddir ddir, uint64_
             dprint(FD_RATE, "SW: linear, bytes >= low_half_bytes square wave bursting poisson next_io_time: %d, bytes: %d, usecs_in_pulse: %d\n", ret, bytes,usecs_in_pulse);
 
             return ret;
-        } else{ // in low half
+        } else{ // in low half,  -> bps_min != 0
             dprint(FD_RATE, "SW: linear < , square wave rate_io_period_issue_bytes %d < low_half_bytes %d\n",bytes,low_half_bytes);
 
             uint64_t usecs_in_low_half = (1000000 * bytes) / bps_min;
@@ -941,7 +941,7 @@ static long long usec_for_io(struct thread_data *td, enum fio_ddir ddir, uint64_
                 uint64_t remainder = byte_remainder % bps_max;
                 ret = td->o.square_wave_period * periods + remainder * 1000000 / bps_max + secs_in_pulse * 1000000 - td->real_phase;
                 return ret;
-            }else{
+            }else{ // -> bps_min != 0
                 dprint(FD_RATE, "SW: linear square wave, in negative half \n");
                 uint64_t secs_after_pulse = (byte_remainder - byte_per_pulse) / bps_min;
                 uint64_t remainder = (byte_remainder - byte_per_pulse) % bps_min;
