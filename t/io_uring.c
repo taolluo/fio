@@ -93,7 +93,7 @@ static int buffered = 0;	/* use buffered IO, not O_DIRECT */
 static int sq_thread_poll = 1;	/* use kernel submission/poller thread */
 static int sq_thread_cpu = -1;	/* pin above thread to this CPU */
 static int do_nop = 0;		/* no-op SQ ring commands */
-static int sqe_aync = 1;		/* no-op SQ ring commands */
+static int sqe_async = 1;		/* no-op SQ ring commands */
 
 static int io_uring_register_buffers(struct submitter *s)
 {
@@ -181,7 +181,7 @@ static void init_io(struct submitter *s, unsigned index)
 		sqe->fd = f->real_fd;
 	}
 
-    if (sqe_aync) {
+    if (sqe_async) {
         sqe->flags |= IOSQE_ASYNC;
     }
 
