@@ -90,9 +90,10 @@ static int polled = 1;		/* use IO polling */
 static int fixedbufs = 1;	/* use fixed user buffers */
 static int register_files = 1;	/* use fixed files */
 static int buffered = 0;	/* use buffered IO, not O_DIRECT */
-static int sq_thread_poll = 0;	/* use kernel submission/poller thread */
+static int sq_thread_poll = 1;	/* use kernel submission/poller thread */
 static int sq_thread_cpu = -1;	/* pin above thread to this CPU */
 static int do_nop = 0;		/* no-op SQ ring commands */
+static int sqe_aync = 1;		/* no-op SQ ring commands */
 
 static int io_uring_register_buffers(struct submitter *s)
 {
@@ -179,6 +180,11 @@ static void init_io(struct submitter *s, unsigned index)
 		sqe->flags = 0;
 		sqe->fd = f->real_fd;
 	}
+
+    if (sqe_aync) {
+        sqe->flags |= IOSQE_ASYNC;
+    }
+
 	if (fixedbufs) {
 		sqe->opcode = IORING_OP_READ_FIXED;
 		sqe->addr = (unsigned long) s->iovecs[index].iov_base;

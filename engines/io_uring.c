@@ -146,6 +146,15 @@ static struct fio_option options[] = {
 		.category = FIO_OPT_C_ENGINE,
 		.group	= FIO_OPT_G_IOURING,
 	},
+    {
+            .name	= "sqe_async",
+            .lname	= "Kernel SQ thread polling",
+            .type	= FIO_OPT_INT,
+            .off1	= offsetof(struct ioring_options, sqe_async),
+            .help	= "Offload submission/completion to kernel thread",
+            .category = FIO_OPT_C_ENGINE,
+            .group	= FIO_OPT_G_IOURING,
+    },
 	{
 		.name	= NULL,
 	},
@@ -172,6 +181,9 @@ static int fio_ioring_prep(struct thread_data *td, struct io_u *io_u)
 
 	/* zero out fields not used in this submission */
 	memset(sqe, 0, sizeof(*sqe));
+
+    if (o->sqe_async)
+        sqe->flags |= IOSQE_ASYNC;
 
 	if (o->registerfiles)
 	{

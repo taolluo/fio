@@ -66,6 +66,7 @@ struct ioring_options {
     unsigned int sqpoll_idle;
     unsigned int nonvectored;
     unsigned int uncached;
+    unsigned int sqe_async;
 };
 
 #endif //FIO_IO_URING_H
